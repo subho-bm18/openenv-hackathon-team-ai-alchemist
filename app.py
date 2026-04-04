@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
@@ -18,6 +20,7 @@ from real_estate_pipeline.tasks import load_task
 
 app = FastAPI(title="Real Estate Pipeline OpenEnv", version="0.1.0")
 env = RealEstatePipelineEnv()
+latest_call_cache: dict[str, object] = {}
 
 
 class ResetRequest(BaseModel):
@@ -60,17 +63,32 @@ def state() -> dict[str, object]:
 def latest_call() -> dict[str, object]:
     try:
         current_state = env.state()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError:
+        if latest_call_cache:
+            return latest_call_cache
+        return {
+            "available": False,
+            "detail": "No active or cached call transcript is available yet.",
+            "call_transcript": [],
+        }
 
     opportunity = current_state["active_opportunity"]
+    if opportunity.get("call_transcript"):
+        return {
+            "available": True,
+            "opportunity_id": opportunity["opportunity_id"],
+            "customer_name": opportunity["customer_name"],
+            "customer_contacted": opportunity.get("customer_contacted", False),
+            "call_outcome": opportunity.get("call_outcome"),
+            "last_contact_note": opportunity.get("last_contact_note"),
+            "call_transcript": opportunity.get("call_transcript", []),
+        }
+    if latest_call_cache:
+        return latest_call_cache
     return {
-        "opportunity_id": opportunity["opportunity_id"],
-        "customer_name": opportunity["customer_name"],
-        "customer_contacted": opportunity.get("customer_contacted", False),
-        "call_outcome": opportunity.get("call_outcome"),
-        "last_contact_note": opportunity.get("last_contact_note"),
-        "call_transcript": opportunity.get("call_transcript", []),
+        "available": False,
+        "detail": "No active or cached call transcript is available yet.",
+        "call_transcript": [],
     }
 
 
@@ -102,7 +120,7 @@ def simulate_live(request: LiveTrafficSimulationRequest | None = None) -> LiveTr
 
 @app.get("/simulate/live/stream")
 def simulate_live_stream(delay_seconds: float = 0.35) -> StreamingResponse:
-    stream = stream_live_traffic_events(DEFAULT_STREAM_LEADS, delay_seconds=max(delay_seconds, 0.0))
+    stream = _cache_call_stream(stream_live_traffic_events(DEFAULT_STREAM_LEADS, delay_seconds=max(delay_seconds, 0.0)))
     return StreamingResponse(stream, media_type="application/x-ndjson")
 
 
@@ -112,8 +130,41 @@ def simulate_live_stream_custom(
     delay_seconds: float = 0.35,
 ) -> StreamingResponse:
     leads = request.leads if request and request.leads else DEFAULT_STREAM_LEADS
-    stream = stream_live_traffic_events(leads, delay_seconds=max(delay_seconds, 0.0))
+    stream = _cache_call_stream(stream_live_traffic_events(leads, delay_seconds=max(delay_seconds, 0.0)))
     return StreamingResponse(stream, media_type="application/x-ndjson")
+
+
+def _cache_call_stream(stream):
+    for raw_event in stream:
+        try:
+            event = json.loads(raw_event)
+        except json.JSONDecodeError:
+            yield raw_event
+            continue
+
+        payload = event.get("payload", {})
+        if event.get("event") == "lead_step" and payload.get("call_transcript"):
+            latest_call_cache.clear()
+            latest_call_cache.update(
+                {
+                    "opportunity_id": event.get("lead_id"),
+                    "customer_name": payload.get("customer_name") or event.get("lead_id"),
+                    "available": True,
+                    "customer_contacted": True,
+                    "call_outcome": payload.get("call_outcome"),
+                    "last_contact_note": _last_customer_turn(payload.get("call_transcript", [])),
+                    "call_transcript": payload.get("call_transcript", []),
+                }
+            )
+        yield raw_event
+
+
+def _last_customer_turn(call_transcript: list[dict[str, object]]) -> str | None:
+    for turn in reversed(call_transcript):
+        if turn.get("speaker") == "customer":
+            text = turn.get("text")
+            return text if isinstance(text, str) else None
+    return None
 
 
 @app.get("/dashboard/live", response_class=HTMLResponse)
@@ -258,6 +309,22 @@ def live_dashboard() -> HTMLResponse:
       background: #d9e7e4;
       color: #24453f;
     }
+    .voice {
+      background: #355c7d;
+    }
+    .voice-panel {
+      border: 1px dashed var(--border);
+      border-radius: 18px;
+      padding: 14px;
+      margin-bottom: 18px;
+      background: rgba(242, 248, 250, 0.85);
+    }
+    .voice-log {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      min-height: 22px;
+    }
     .segment-group.hidden {
       display: none;
     }
@@ -325,6 +392,16 @@ def live_dashboard() -> HTMLResponse:
     <div class="grid">
       <section>
         <h2>Manual Lead Entry</h2>
+        <div class="voice-panel">
+          <div><strong>Voice Assistant</strong></div>
+          <div class="sub">Use your microphone to capture a lead verbally or play back the latest simulated call flow. Best supported in Chromium-based browsers.</div>
+          <div class="form-actions" style="margin-top: 12px; margin-bottom: 0;">
+            <button id="startVoiceIntakeButton" class="voice">Start Voice Intake</button>
+            <button id="dictateInquiryButton" class="voice">Dictate Inquiry</button>
+            <button id="playLatestCallButton" class="secondary">Play Latest Call</button>
+          </div>
+          <div class="voice-log" id="voiceLog">Voice assistant idle.</div>
+        </div>
         <div class="form-grid">
           <label>
             Lead ID
@@ -401,7 +478,15 @@ def live_dashboard() -> HTMLResponse:
     const loadDefaultButton = document.getElementById("loadDefaultButton");
     const loadCommercialButton = document.getElementById("loadCommercialButton");
     const segmentSelect = document.getElementById("segment");
+    const startVoiceIntakeButton = document.getElementById("startVoiceIntakeButton");
+    const dictateInquiryButton = document.getElementById("dictateInquiryButton");
+    const playLatestCallButton = document.getElementById("playLatestCallButton");
+    const voiceLog = document.getElementById("voiceLog");
     const leads = new Map();
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognitionSupported = Boolean(SpeechRecognition);
+    const playbackSupported = Boolean(window.speechSynthesis);
+    let recognitionBusy = false;
 
     function renderLeadCard(leadId) {
       const lead = leads.get(leadId);
@@ -503,6 +588,199 @@ def live_dashboard() -> HTMLResponse:
       loadDefaultButton.textContent = segment === "commercial" ? "Load Residential Example" : "Load Whitefield Example";
     }
 
+    function speak(text) {
+      if (!playbackSupported) {
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function waitForSpeech(promptText, retries = 2) {
+      if (!recognitionSupported) {
+        return Promise.reject(new Error("Speech recognition is not supported in this browser."));
+      }
+
+      voiceLog.textContent = promptText;
+      if (playbackSupported) {
+        speak(promptText);
+      }
+
+      return new Promise((resolve, reject) => {
+        const recognition = new SpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.continuous = true;
+        recognitionTimeout = null;
+
+        let settled = false;
+        let recognitionTimeout;
+        let finalTranscript = "";
+
+        recognition.onresult = (event) => {
+          let interimTranscript = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const transcript = event.results[i][0].transcript.trim();
+            if (event.results[i].isFinal) {
+              finalTranscript += ` ${transcript}`;
+            } else {
+              interimTranscript += ` ${transcript}`;
+            }
+          }
+          const heard = (finalTranscript || interimTranscript).trim();
+          if (heard) {
+            voiceLog.textContent = `Heard: ${heard}`;
+          }
+        };
+        recognition.onerror = (event) => {
+          settled = true;
+          if (recognitionTimeout) clearTimeout(recognitionTimeout);
+          const code = event.error || "speech_error";
+          if ((code === "no-speech" || code === "audio-capture") && retries > 0) {
+            voiceLog.textContent = "I did not catch that. Trying once more...";
+            resolve(waitForSpeech(promptText, retries - 1));
+            return;
+          }
+          reject(new Error(code));
+        };
+        recognition.onend = () => {
+          recognitionBusy = false;
+          const heard = finalTranscript.trim();
+          if (heard) {
+            settled = true;
+            resolve(heard);
+            return;
+          }
+          if (!settled) {
+            if (retries > 0) {
+              voiceLog.textContent = "No speech captured. Trying again, please speak after the prompt.";
+              resolve(waitForSpeech(promptText, retries - 1));
+              return;
+            }
+            reject(new Error("no_speech_captured"));
+          }
+        };
+
+        recognitionBusy = true;
+        const startRecognition = () => {
+          window.setTimeout(() => {
+            recognition.start();
+          }, 350);
+          recognitionTimeout = window.setTimeout(() => {
+            try {
+              recognition.stop();
+            } catch (error) {
+              // Ignore stop errors from already-ended sessions.
+            }
+          }, 12000);
+        };
+        if (playbackSupported && promptText) {
+          const utterance = new SpeechSynthesisUtterance(promptText);
+          utterance.rate = 1;
+          utterance.pitch = 1;
+          utterance.onend = startRecognition;
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+        } else {
+          startRecognition();
+        }
+      });
+    }
+
+    async function startVoiceIntake() {
+      if (!recognitionSupported) {
+        voiceLog.textContent = "Voice intake needs a browser with speech recognition support.";
+        return;
+      }
+      if (recognitionBusy) {
+        voiceLog.textContent = "Voice assistant is already listening.";
+        return;
+      }
+
+      try {
+        const name = await waitForSpeech("Tell me the customer name.");
+        document.getElementById("customerName").value = name;
+
+        const segmentAnswer = (await waitForSpeech("Is this a residential or commercial lead?")).toLowerCase();
+        if (segmentAnswer.includes("commercial")) {
+          segmentSelect.value = "commercial";
+          syncSegmentFields();
+        } else {
+          segmentSelect.value = "residential";
+          syncSegmentFields();
+        }
+
+        const location = await waitForSpeech("What is the preferred location?");
+        document.getElementById("location").value = location;
+
+        const budget = await waitForSpeech("What is the budget?");
+        document.getElementById("budget").value = budget.replace(/[^0-9]/g, "");
+
+        const timeline = await waitForSpeech("What is the timeline in days?");
+        document.getElementById("timelineDays").value = timeline.replace(/[^0-9]/g, "");
+
+        if (segmentSelect.value === "commercial") {
+          const businessType = await waitForSpeech("What type of business is this lead for?");
+          document.getElementById("businessType").value = businessType;
+
+          const sqftMin = await waitForSpeech("What is the minimum square footage required?");
+          document.getElementById("squareFeetMin").value = sqftMin.replace(/[^0-9]/g, "");
+
+          const sqftMax = await waitForSpeech("What is the maximum square footage required?");
+          document.getElementById("squareFeetMax").value = sqftMax.replace(/[^0-9]/g, "");
+        } else {
+          const propertyType = await waitForSpeech("What property type does the customer want?");
+          document.getElementById("propertyType").value = propertyType;
+        }
+
+        const inquiry = await waitForSpeech("Now describe the inquiry in one sentence.");
+        document.getElementById("inquiry").value = inquiry;
+        document.getElementById("leadId").value = `voice_${segmentSelect.value}_${Date.now()}`;
+        voiceLog.textContent = "Voice intake completed. Review the form and run the lead.";
+      } catch (error) {
+        voiceLog.textContent = `Voice intake stopped: ${error.message}`;
+      }
+    }
+
+    async function dictateInquiry() {
+      if (!recognitionSupported) {
+        voiceLog.textContent = "Voice dictation is not supported in this browser.";
+        return;
+      }
+      if (recognitionBusy) {
+        voiceLog.textContent = "Voice assistant is already listening.";
+        return;
+      }
+      try {
+        voiceLog.textContent = "Listening for inquiry...";
+        const inquiry = await waitForSpeech("");
+        document.getElementById("inquiry").value = inquiry;
+        voiceLog.textContent = "Inquiry updated from voice input.";
+      } catch (error) {
+        voiceLog.textContent = `Dictation stopped: ${error.message}`;
+      }
+    }
+
+    async function playLatestCall() {
+      if (!playbackSupported) {
+        voiceLog.textContent = "Speech playback is not supported in this browser.";
+        return;
+      }
+      const response = await fetch("/calls/latest");
+      const data = await response.json();
+      if (!data.available || !data.call_transcript || !data.call_transcript.length) {
+        voiceLog.textContent = "No call transcript is available yet. Run a lead through the workflow first.";
+        return;
+      }
+      const script = data.call_transcript.map((turn) => `${turn.speaker}: ${turn.text}`).join(". ");
+      voiceLog.textContent = `Playing latest call for ${data.customer_name}.`;
+      speak(script);
+    }
+
     async function consumeStream(response) {
       startButton.disabled = true;
       submitManualButton.disabled = true;
@@ -584,6 +862,16 @@ def live_dashboard() -> HTMLResponse:
     loadDefaultButton.addEventListener("click", loadWhitefieldExample);
     loadCommercialButton.addEventListener("click", loadCommercialExample);
     segmentSelect.addEventListener("change", syncSegmentFields);
+    startVoiceIntakeButton.addEventListener("click", startVoiceIntake);
+    dictateInquiryButton.addEventListener("click", dictateInquiry);
+    playLatestCallButton.addEventListener("click", playLatestCall);
+    if (!recognitionSupported && !playbackSupported) {
+      voiceLog.textContent = "Voice features are unavailable in this browser. Use Chrome or Edge for speech recognition.";
+    } else if (!recognitionSupported) {
+      voiceLog.textContent = "Voice playback is available, but microphone dictation is not supported in this browser.";
+    } else if (!playbackSupported) {
+      voiceLog.textContent = "Voice dictation is available, but speech playback is not supported in this browser.";
+    }
     loadWhitefieldExample();
   </script>
 </body>

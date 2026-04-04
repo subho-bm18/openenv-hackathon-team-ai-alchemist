@@ -1,7 +1,7 @@
-import asyncio
 import json
+import asyncio
 
-from app import live_dashboard, simulate_live_stream_custom
+from app import live_dashboard, latest_call, simulate_live_stream_custom
 from real_estate_pipeline.models import InboundLead, LiveTrafficSimulationRequest
 from real_estate_pipeline.live_simulator import (
     DEFAULT_LIVE_LEADS,
@@ -59,6 +59,8 @@ def test_live_dashboard_contains_stream_controls() -> None:
     assert "/simulate/live/stream" in body
     assert "Load Commercial Example" in body
     assert "commercial-group hidden" in body
+    assert "Start Voice Intake" in body
+    assert "Play Latest Call" in body
 
 
 def test_custom_stream_endpoint_returns_manual_lead_events() -> None:
@@ -90,6 +92,22 @@ def test_custom_stream_endpoint_returns_manual_lead_events() -> None:
 
     assert first_event["event"] == "run_started"
     assert last_event["event"] == "run_completed"
+
+
+def test_latest_call_uses_cached_stream_transcript() -> None:
+    request = LiveTrafficSimulationRequest(leads=[DEFAULT_LIVE_LEADS[0]])
+    response = simulate_live_stream_custom(request, 0.0)
+
+    async def exhaust_stream() -> None:
+        async for _ in response.body_iterator:
+            pass
+
+    asyncio.run(exhaust_stream())
+    latest = latest_call()
+
+    assert latest["available"] is True
+    assert latest["customer_contacted"] is True
+    assert len(latest["call_transcript"]) >= 3
 
 
 def test_commercial_flow_reaches_deal_closed() -> None:
