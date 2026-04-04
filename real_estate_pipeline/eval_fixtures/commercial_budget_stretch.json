@@ -1,0 +1,79 @@
+{
+  "task_id": "commercial_budget_stretch",
+  "difficulty": "eval",
+  "queue": [
+    {
+      "opportunity_id": "opp_eval_com_001",
+      "segment": "commercial",
+      "title": "Retail tenant stretching budget",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_eval_com_001",
+    "segment": "commercial",
+    "customer_name": "Roast & Co",
+    "inquiry": "Need 2500 to 2800 square feet in a strong retail zone. We prefer CBD and can stretch to 3.05 lakh if frontage is excellent.",
+    "budget": 305000,
+    "location": "CBD Retail District",
+    "timeline_days": 40,
+    "business_type": "cafe",
+    "square_feet_min": 2500,
+    "square_feet_max": 2800,
+    "missing_fields": [],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "com_prop_301",
+      "segment": "commercial",
+      "title": "Retail corner shell in CBD",
+      "location": "CBD Retail District",
+      "price_type": "lease",
+      "price": 315000,
+      "details": {
+        "square_feet": 2800,
+        "fit_for": "retail_food",
+        "frontage": "high"
+      }
+    },
+    {
+      "property_id": "com_prop_302",
+      "segment": "commercial",
+      "title": "Office floor in secondary market",
+      "location": "Secondary Business Park",
+      "price_type": "lease",
+      "price": 255000,
+      "details": {
+        "square_feet": 3100,
+        "fit_for": "office",
+        "frontage": "low"
+      }
+    }
+  ],
+  "business_rules": [
+    "Strong commercial tenants with clear requirements should still be prioritized even when budget stretch is modest.",
+    "Recommend the closest strategic fit if the rent is within a reasonable stretch band.",
+    "Advance to negotiation only after terms are credible."
+  ],
+  "expected": {
+    "category": "commercial_tenant",
+    "priority": "high",
+    "property_id": "com_prop_301",
+    "lease_terms": {
+      "lease_years": 5,
+      "monthly_rent": 305000,
+      "deposit_months": 6,
+      "fit_out_support": true
+    },
+    "stage": "negotiation",
+    "weights": {
+      "category": 0.2,
+      "priority": 0.2,
+      "property_match": 0.2,
+      "lease_terms": 0.2,
+      "stage": 0.2
+    }
+  }
+}

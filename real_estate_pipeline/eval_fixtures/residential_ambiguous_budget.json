@@ -1,0 +1,60 @@
+{
+  "task_id": "residential_ambiguous_budget",
+  "difficulty": "eval",
+  "queue": [
+    {
+      "opportunity_id": "opp_eval_res_002",
+      "segment": "residential",
+      "title": "Buyer with unclear affordability",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_eval_res_002",
+    "segment": "residential",
+    "customer_name": "Neha Batra",
+    "inquiry": "We want a 3-bedroom family home on the west side. Still checking if we should buy now or after our current place sells.",
+    "location": "West Side",
+    "property_type": "3-bedroom home",
+    "missing_fields": [
+      "budget",
+      "timeline_days",
+      "financing_status"
+    ],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "res_prop_201",
+      "segment": "residential",
+      "title": "3BHK premium home west district",
+      "location": "West Side",
+      "price_type": "sale",
+      "price": 16500000,
+      "details": {
+        "property_type": "3-bedroom home"
+      }
+    }
+  ],
+  "business_rules": [
+    "Do not recommend a property when budget and financing readiness are unclear.",
+    "Request the missing affordability and timeline fields before advancing."
+  ],
+  "expected": {
+    "category": "residential_buyer",
+    "priority": "medium",
+    "requested_fields": [
+      "budget",
+      "timeline_days",
+      "financing_status"
+    ],
+    "stage": "nurture",
+    "weights": {
+      "category": 0.2,
+      "priority": 0.2,
+      "missing_info": 0.3,
+      "stage": 0.3
+    }
+  }
+}

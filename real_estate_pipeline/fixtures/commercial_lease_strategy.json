@@ -1,0 +1,79 @@
+{
+  "task_id": "commercial_lease_strategy",
+  "difficulty": "hard",
+  "queue": [
+    {
+      "opportunity_id": "opp_com_001",
+      "segment": "commercial",
+      "title": "Retail lease inquiry in high-footfall zone",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_com_001",
+    "segment": "commercial",
+    "customer_name": "Bean Street Cafe",
+    "inquiry": "We need 2500 to 3000 square feet in a high-footfall retail street. Our opening target is in 45 days. We can stretch to 3.2 lakh monthly if the fit and frontage are strong.",
+    "budget": 320000,
+    "location": "CBD Retail District",
+    "timeline_days": 45,
+    "business_type": "cafe",
+    "square_feet_min": 2500,
+    "square_feet_max": 3000,
+    "missing_fields": [],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "com_prop_301",
+      "segment": "commercial",
+      "title": "Retail corner shell in CBD",
+      "location": "CBD Retail District",
+      "price_type": "lease",
+      "price": 315000,
+      "details": {
+        "square_feet": 2800,
+        "fit_for": "retail_food",
+        "frontage": "high"
+      }
+    },
+    {
+      "property_id": "com_prop_302",
+      "segment": "commercial",
+      "title": "Office floor in secondary market",
+      "location": "Secondary Business Park",
+      "price_type": "lease",
+      "price": 255000,
+      "details": {
+        "square_feet": 3100,
+        "fit_for": "office",
+        "frontage": "low"
+      }
+    }
+  ],
+  "business_rules": [
+    "Strong commercial tenants with clear requirements and timeline should be prioritized high.",
+    "Recommend lease terms that stay within the prospect budget and fit the asset profile.",
+    "Advance to negotiation only after property fit and initial terms are credible."
+  ],
+  "expected": {
+    "category": "commercial_tenant",
+    "priority": "high",
+    "property_id": "com_prop_301",
+    "lease_terms": {
+      "lease_years": 5,
+      "monthly_rent": 315000,
+      "deposit_months": 6,
+      "fit_out_support": true
+    },
+    "stage": "negotiation",
+    "weights": {
+      "category": 0.2,
+      "priority": 0.2,
+      "property_match": 0.2,
+      "lease_terms": 0.2,
+      "stage": 0.2
+    }
+  }
+}

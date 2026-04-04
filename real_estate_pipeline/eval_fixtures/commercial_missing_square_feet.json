@@ -1,0 +1,62 @@
+{
+  "task_id": "commercial_missing_square_feet",
+  "difficulty": "eval",
+  "queue": [
+    {
+      "opportunity_id": "opp_eval_com_002",
+      "segment": "commercial",
+      "title": "Commercial lead missing size details",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_eval_com_002",
+    "segment": "commercial",
+    "customer_name": "Axis Workspace",
+    "inquiry": "Need office space in the airport corridor this quarter. Budget is workable but we still need to confirm team size and exact floor plate.",
+    "budget": 280000,
+    "location": "Airport Corridor",
+    "timeline_days": 60,
+    "business_type": "office",
+    "missing_fields": [
+      "square_feet_min",
+      "square_feet_max"
+    ],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "com_prop_401",
+      "segment": "commercial",
+      "title": "Office suite near airport link road",
+      "location": "Airport Corridor",
+      "price_type": "lease",
+      "price": 275000,
+      "details": {
+        "square_feet": 2400,
+        "fit_for": "office",
+        "frontage": "medium"
+      }
+    }
+  ],
+  "business_rules": [
+    "Do not recommend or negotiate commercial property before confirming minimum and maximum area requirements.",
+    "Collect missing operational requirements before moving the deal."
+  ],
+  "expected": {
+    "category": "commercial_tenant",
+    "priority": "medium",
+    "requested_fields": [
+      "square_feet_min",
+      "square_feet_max"
+    ],
+    "stage": "nurture",
+    "weights": {
+      "category": 0.2,
+      "priority": 0.2,
+      "missing_info": 0.3,
+      "stage": 0.3
+    }
+  }
+}

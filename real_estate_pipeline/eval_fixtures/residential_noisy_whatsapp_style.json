@@ -1,0 +1,67 @@
+{
+  "task_id": "residential_noisy_whatsapp_style",
+  "difficulty": "eval",
+  "queue": [
+    {
+      "opportunity_id": "opp_eval_res_001",
+      "segment": "residential",
+      "title": "Noisy WhatsApp buyer lead",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_eval_res_001",
+    "segment": "residential",
+    "customer_name": "Kunal Jain",
+    "inquiry": "hi need 2bhk in whitefield asap... budget maybe 95L max, move in like 3-4 weeks. pls share fast",
+    "budget": 9500000,
+    "location": "Whitefield",
+    "timeline_days": 28,
+    "property_type": "2BHK apartment",
+    "missing_fields": [],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "res_prop_101",
+      "segment": "residential",
+      "title": "2BHK in Whitefield near metro",
+      "location": "Whitefield",
+      "price_type": "sale",
+      "price": 9200000,
+      "details": {
+        "property_type": "2BHK apartment",
+        "bedrooms": 2
+      }
+    },
+    {
+      "property_id": "res_prop_102",
+      "segment": "residential",
+      "title": "3BHK in Sarjapur",
+      "location": "Sarjapur",
+      "price_type": "sale",
+      "price": 11800000,
+      "details": {
+        "property_type": "3BHK apartment",
+        "bedrooms": 3
+      }
+    }
+  ],
+  "business_rules": [
+    "High-intent residential leads with clear budget and timeline should be prioritized high.",
+    "Recommend a listing only if it matches both budget and location intent."
+  ],
+  "expected": {
+    "category": "residential_buyer",
+    "priority": "high",
+    "property_id": "res_prop_101",
+    "stage": "visit_scheduled",
+    "weights": {
+      "category": 0.25,
+      "priority": 0.25,
+      "property_match": 0.25,
+      "stage": 0.25
+    }
+  }
+}

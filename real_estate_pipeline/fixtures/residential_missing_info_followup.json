@@ -1,0 +1,60 @@
+{
+  "task_id": "residential_missing_info_followup",
+  "difficulty": "medium",
+  "queue": [
+    {
+      "opportunity_id": "opp_res_002",
+      "segment": "residential",
+      "title": "3-bedroom buyer with incomplete details",
+      "stage": "new",
+      "priority": null
+    }
+  ],
+  "opportunity": {
+    "opportunity_id": "opp_res_002",
+    "segment": "residential",
+    "customer_name": "Neha Singh",
+    "inquiry": "I am looking for a 3-bedroom home on the west side. Please share options.",
+    "location": "West Side",
+    "property_type": "3-bedroom home",
+    "missing_fields": [
+      "budget",
+      "timeline_days",
+      "financing_status"
+    ],
+    "notes": []
+  },
+  "inventory": [
+    {
+      "property_id": "res_prop_201",
+      "segment": "residential",
+      "title": "3BHK premium home west district",
+      "location": "West Side",
+      "price_type": "sale",
+      "price": 16500000,
+      "details": {
+        "property_type": "3BHK villa"
+      }
+    }
+  ],
+  "business_rules": [
+    "Do not recommend a specific residential property when budget and purchase readiness are unknown.",
+    "Request missing budget, timeline, and financing status before advancing."
+  ],
+  "expected": {
+    "category": "residential_buyer",
+    "priority": "medium",
+    "requested_fields": [
+      "budget",
+      "timeline_days",
+      "financing_status"
+    ],
+    "stage": "nurture",
+    "weights": {
+      "category": 0.2,
+      "priority": 0.2,
+      "missing_info": 0.3,
+      "stage": 0.3
+    }
+  }
+}

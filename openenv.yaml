@@ -1,0 +1,22 @@
+name: real-estate-pipeline-openenv
+description: Mixed residential and commercial real-estate pipeline environment for lead qualification, follow-up, property matching, and lease strategy.
+version: 0.1.0
+entrypoint: app:app
+python_package: real_estate_pipeline
+environment_class: real_estate_pipeline.env.RealEstatePipelineEnv
+models:
+  observation: real_estate_pipeline.models.Observation
+  action: real_estate_pipeline.models.Action
+  reward: real_estate_pipeline.models.Reward
+tasks:
+  - residential_buyer_qualification
+  - residential_missing_info_followup
+  - commercial_lease_strategy
+metadata:
+  domain: real_estate
+  tags:
+    - openenv
+    - real-estate
+    - residential
+    - commercial
+    - leasing

@@ -1,0 +1,6 @@
+{
+  "train_records": 471,
+  "test_records": 118,
+  "category_accuracy": 1.0,
+  "next_action_accuracy": 0.6102
+}
