@@ -7,14 +7,16 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from real_estate_pipeline import Action, RealEstatePipelineEnv
+from real_estate_pipeline.cab_booking import book_cab, list_cab_providers, preview_cab_booking
 from real_estate_pipeline.graders import grade_task
 from real_estate_pipeline.live_simulator import (
     DEFAULT_LIVE_LEADS,
     DEFAULT_STREAM_LEADS,
+    process_live_lead,
     simulate_live_traffic,
     stream_live_traffic_events,
 )
-from real_estate_pipeline.models import LiveTrafficSimulationRequest, LiveTrafficSimulationResponse
+from real_estate_pipeline.models import InboundLead, LiveTrafficSimulationRequest, LiveTrafficSimulationResponse
 from real_estate_pipeline.tasks import load_task
 
 
@@ -25,6 +27,29 @@ latest_call_cache: dict[str, object] = {}
 
 class ResetRequest(BaseModel):
     task_id: str | None = None
+
+
+class CabBookingRequest(BaseModel):
+    provider: str
+    pickup_location: str
+    drop_location: str
+    rider_name: str
+    mode: str = "auto"
+
+
+class CabEligibilityMockRequest(BaseModel):
+    customer_name: str
+    inquiry: str
+    customer_location: str
+    property_location: str
+    property_type: str = "2BHK apartment"
+    budget: int | None = None
+    timeline_days: int | None = None
+    profession: str | None = None
+    employment_type: str | None = None
+    total_experience_years: int | None = None
+    provider: str = "uber"
+    builder_cab_available: bool = True
 
 
 @app.get("/")
@@ -89,6 +114,94 @@ def latest_call() -> dict[str, object]:
         "available": False,
         "detail": "No active or cached call transcript is available yet.",
         "call_transcript": [],
+    }
+
+
+@app.get("/cab/providers")
+def cab_providers() -> dict[str, object]:
+    return {"providers": list_cab_providers()}
+
+
+@app.post("/cab/bookings/preview")
+def cab_booking_preview(request: CabBookingRequest) -> dict[str, object]:
+    try:
+        return preview_cab_booking(
+            provider=request.provider,
+            pickup_location=request.pickup_location,
+            drop_location=request.drop_location,
+            rider_name=request.rider_name,
+            mode=request.mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/cab/bookings")
+def create_cab_booking(request: CabBookingRequest) -> dict[str, object]:
+    try:
+        return book_cab(
+            provider=request.provider,
+            pickup_location=request.pickup_location,
+            drop_location=request.drop_location,
+            rider_name=request.rider_name,
+            mode=request.mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/cab/mock-flow")
+def cab_mock_flow(request: CabEligibilityMockRequest) -> dict[str, object]:
+    inventory = [
+        {
+            "property_id": "mock_res_prop_001",
+            "segment": "residential",
+            "title": f"{request.property_type} in {request.property_location}",
+            "location": request.property_location,
+            "price_type": "sale",
+            "price": request.budget or 9500000,
+            "details": {
+                "property_type": request.property_type,
+                "builder_cab_available": request.builder_cab_available,
+            },
+        }
+    ]
+    lead = InboundLead(
+        lead_id="mock_cab_flow_001",
+        customer_name=request.customer_name,
+        inquiry=request.inquiry,
+        segment="residential",
+        profession=request.profession,
+        total_experience_years=request.total_experience_years,
+        employment_type=request.employment_type,
+        preferred_cab_provider=request.provider,
+        customer_location=request.customer_location,
+        budget=request.budget,
+        location=request.property_location,
+        timeline_days=request.timeline_days,
+        property_type=request.property_type,
+    )
+    result = process_live_lead(lead, inventory=inventory)
+    active = result.final_state["active_opportunity"]
+    customer_response = active.get("cab_customer_response") or active.get("last_contact_note")
+    return {
+        "lead_id": result.lead_id,
+        "final_stage": result.final_stage,
+        "cab_flow": {
+            "customer_wants_cab": active.get("cab_requested"),
+            "builder_cab_available": active.get("builder_provides_cab"),
+            "builder_cab_approved": active.get("builder_cab_approved"),
+            "pickup_eligible": active.get("pickup_eligible"),
+            "drop_eligible": active.get("drop_eligible"),
+            "eligibility_status": active.get("cab_eligibility_status"),
+            "customer_response": customer_response,
+            "cab_booking_status": active.get("cab_booking_status"),
+            "cab_booking_reference": active.get("cab_booking_reference"),
+            "cab_booking_sla_seconds": active.get("cab_booking_sla_seconds"),
+            "cab_booked_within_sla": active.get("cab_booked_within_sla"),
+            "notifications": active.get("cab_notifications", []),
+        },
+        "action_trace": [step.action.model_dump(exclude_none=True) for step in result.action_trace],
     }
 
 
@@ -271,6 +384,55 @@ def live_dashboard() -> HTMLResponse:
       padding: 14px;
       background: rgba(255, 255, 255, 0.72);
     }
+    .cab-panel {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(247, 250, 244, 0.9);
+      margin-bottom: 18px;
+    }
+    .cab-status-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .cab-status-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--border);
+      font-size: 0.95rem;
+    }
+    .cab-status-item .label {
+      color: var(--muted);
+    }
+    .cab-status-item .value {
+      font-weight: 700;
+      color: var(--ink);
+      text-align: right;
+    }
+    .cab-status-item.active .value {
+      color: var(--accent);
+    }
+    .cab-status-item.good .value {
+      color: #1c7c54;
+    }
+    .cab-status-item.bad .value {
+      color: #a44a3f;
+    }
+    .cab-message {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--border);
+      color: var(--ink);
+      min-height: 24px;
+    }
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -412,6 +574,18 @@ def live_dashboard() -> HTMLResponse:
             <input id="customerName" value="Demo Buyer" />
           </label>
           <label>
+            Profession
+            <input id="profession" value="software engineer" />
+          </label>
+          <label>
+            Employment Type
+            <select id="employmentType">
+              <option value="salaried" selected>salaried</option>
+              <option value="business">business</option>
+              <option value="self-employed">self-employed</option>
+            </select>
+          </label>
+          <label>
             Segment
             <select id="segment">
               <option value="residential" selected>residential</option>
@@ -423,12 +597,20 @@ def live_dashboard() -> HTMLResponse:
             <input id="location" value="Whitefield" />
           </label>
           <label>
+            Customer Current Location
+            <input id="customerLocation" value="Marathahalli" />
+          </label>
+          <label>
             Budget
             <input id="budget" type="number" value="9500000" />
           </label>
           <label>
             Timeline Days
             <input id="timelineDays" type="number" value="30" />
+          </label>
+          <label>
+            Total Experience (Years)
+            <input id="totalExperienceYears" type="number" value="7" />
           </label>
           <label class="segment-group residential-group">
             Property Type
@@ -460,6 +642,23 @@ def live_dashboard() -> HTMLResponse:
           <button id="loadDefaultButton" class="secondary">Load Whitefield Example</button>
           <button id="loadCommercialButton" class="secondary">Load Commercial Example</button>
         </div>
+        <h2>Cab Operations</h2>
+        <div class="cab-panel">
+          <div class="sub">Residential lead runs update this section with cab eligibility, booking progress, notifications, and SLA timing.</div>
+          <div class="cab-status-list" id="cabStatusList">
+            <div class="cab-status-item"><span class="label">Cab Eligibility</span><span class="value">Awaiting residential lead</span></div>
+            <div class="cab-status-item"><span class="label">Builder Approval</span><span class="value">Not checked</span></div>
+            <div class="cab-status-item"><span class="label">Pickup Eligibility</span><span class="value">Not checked</span></div>
+            <div class="cab-status-item"><span class="label">Drop Eligibility</span><span class="value">Not checked</span></div>
+            <div class="cab-status-item"><span class="label">Cab Booking</span><span class="value">Awaiting confirmation</span></div>
+            <div class="cab-status-item"><span class="label">Booking Reference</span><span class="value">Pending</span></div>
+            <div class="cab-status-item"><span class="label">Cab Timing SLA</span><span class="value">Pending</span></div>
+            <div class="cab-status-item"><span class="label">Chat Notification</span><span class="value">Pending</span></div>
+            <div class="cab-status-item"><span class="label">SMS Notification</span><span class="value">Pending</span></div>
+            <div class="cab-status-item"><span class="label">WhatsApp Notification</span><span class="value">Pending</span></div>
+          </div>
+          <div class="cab-message" id="cabMessage">Run a residential lead to see the cab operations flow.</div>
+        </div>
         <h2>Lead Outcomes</h2>
         <div class="lead-list" id="leadList"></div>
       </section>
@@ -474,6 +673,8 @@ def live_dashboard() -> HTMLResponse:
     const statusText = document.getElementById("statusText");
     const leadList = document.getElementById("leadList");
     const eventList = document.getElementById("eventList");
+    const cabStatusList = document.getElementById("cabStatusList");
+    const cabMessage = document.getElementById("cabMessage");
     const submitManualButton = document.getElementById("submitManualButton");
     const loadDefaultButton = document.getElementById("loadDefaultButton");
     const loadCommercialButton = document.getElementById("loadCommercialButton");
@@ -483,7 +684,9 @@ def live_dashboard() -> HTMLResponse:
     const playLatestCallButton = document.getElementById("playLatestCallButton");
     const voiceLog = document.getElementById("voiceLog");
     const leads = new Map();
+    const cabVoiceState = new Map();
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const recognitionSupported = Boolean(SpeechRecognition);
     const playbackSupported = Boolean(window.speechSynthesis);
     let recognitionBusy = false;
@@ -516,10 +719,125 @@ def live_dashboard() -> HTMLResponse:
       eventList.prepend(row);
     }
 
+    function resetCabPanel() {
+      cabStatusList.innerHTML = `
+        <div class="cab-status-item"><span class="label">Cab Eligibility</span><span class="value">Awaiting residential lead</span></div>
+        <div class="cab-status-item"><span class="label">Builder Approval</span><span class="value">Not checked</span></div>
+        <div class="cab-status-item"><span class="label">Pickup Eligibility</span><span class="value">Not checked</span></div>
+        <div class="cab-status-item"><span class="label">Drop Eligibility</span><span class="value">Not checked</span></div>
+        <div class="cab-status-item"><span class="label">Cab Booking</span><span class="value">Awaiting confirmation</span></div>
+        <div class="cab-status-item"><span class="label">Booking Reference</span><span class="value">Pending</span></div>
+        <div class="cab-status-item"><span class="label">Cab Timing SLA</span><span class="value">Pending</span></div>
+        <div class="cab-status-item"><span class="label">Chat Notification</span><span class="value">Pending</span></div>
+        <div class="cab-status-item"><span class="label">SMS Notification</span><span class="value">Pending</span></div>
+        <div class="cab-status-item"><span class="label">WhatsApp Notification</span><span class="value">Pending</span></div>
+      `;
+      cabMessage.textContent = "Run a residential lead to see the cab operations flow.";
+    }
+
+    function setCabStatus(label, value, tone = "") {
+      const rows = Array.from(cabStatusList.querySelectorAll(".cab-status-item"));
+      const row = rows.find((item) => item.querySelector(".label")?.textContent === label);
+      if (!row) return;
+      row.classList.remove("active", "good", "bad");
+      if (tone) {
+        row.classList.add(tone);
+      }
+      const valueNode = row.querySelector(".value");
+      if (valueNode) {
+        valueNode.textContent = value;
+      }
+    }
+
+    function updateCabPanelFromPayload(payload, lead = {}) {
+      if (!payload) return;
+      if (lead.segment === "commercial") {
+        cabMessage.textContent = "Cab operations are only shown for residential leads in this dashboard.";
+        return;
+      }
+      const voiceState = cabVoiceState.get(lead.customer_name || "default") || {
+        initiationAnnounced: false,
+        bookedAnnounced: false,
+        notificationsAnnounced: false,
+      };
+
+      if (payload.action?.action_type === "confirm_site_visit_interest") {
+        setCabStatus("Cab Eligibility", "Awaiting builder approval", "active");
+        setCabStatus("Cab Booking", "Awaiting cab booking", "active");
+        cabMessage.textContent = "Customer has confirmed site-visit interest and asked for cab support.";
+      }
+
+      if (payload.builder_cab_approved !== undefined || payload.pickup_eligible !== undefined || payload.drop_eligible !== undefined) {
+        const eligible = Boolean(payload.builder_cab_approved && payload.pickup_eligible && payload.drop_eligible);
+        setCabStatus("Builder Approval", payload.builder_cab_approved ? "Approved" : "Not approved", payload.builder_cab_approved ? "good" : "bad");
+        setCabStatus("Pickup Eligibility", payload.pickup_eligible ? "Eligible" : "Not eligible", payload.pickup_eligible ? "good" : "bad");
+        setCabStatus("Drop Eligibility", payload.drop_eligible ? "Eligible" : "Not eligible", payload.drop_eligible ? "good" : "bad");
+        setCabStatus("Cab Eligibility", eligible ? "Cab eligible" : "Cab not eligible", eligible ? "good" : "bad");
+      }
+
+      if (payload.cab_customer_response) {
+        cabMessage.textContent = payload.cab_customer_response;
+      }
+
+      if (
+        payload.action?.action_type === "respond_cab_eligibility"
+        && payload.builder_cab_approved
+        && !voiceState.initiationAnnounced
+      ) {
+        voiceState.initiationAnnounced = true;
+        const providerHint = document.getElementById("employmentType").value === "salaried" ? "Uber" : "Ola";
+        const announcement = `${payload.cab_customer_response} We are now initiating your cab booking with ${providerHint}. Please wait up to 59 seconds while I fetch the booking details.`;
+        voiceLog.textContent = announcement;
+        playBeep(700, 140);
+        speak(announcement);
+      }
+
+      if (payload.action?.action_type === "book_cab") {
+        setCabStatus("Cab Booking", payload.cab_booking_reference ? "Cab booked" : "Awaiting cab booking", payload.cab_booking_reference ? "good" : "active");
+      }
+
+      if (payload.cab_booking_reference) {
+        setCabStatus("Booking Reference", payload.cab_booking_reference, "good");
+        setCabStatus("Cab Timing SLA", "Booked within 59 seconds", "good");
+        if (!voiceState.bookedAnnounced) {
+          voiceState.bookedAnnounced = true;
+          const providerName = payload.action?.cab_provider
+            || lead.preferred_cab_provider
+            || (document.getElementById("employmentType").value === "salaried" ? "Uber" : "Ola");
+          const bookedMessage = `Your cab has been booked with ${providerName}. Your booking reference is ${payload.cab_booking_reference}.`;
+          voiceLog.textContent = bookedMessage;
+          playBeep(760, 140);
+          speak(bookedMessage);
+        }
+      }
+
+      const notifications = payload.cab_notifications || [];
+      const byChannel = new Map(notifications.map((item) => [item.channel, item]));
+      if (byChannel.has("chat")) {
+        setCabStatus("Chat Notification", "Notification sent", "good");
+      }
+      if (byChannel.has("sms")) {
+        setCabStatus("SMS Notification", "Notification sent", "good");
+      }
+      if (byChannel.has("whatsapp")) {
+        setCabStatus("WhatsApp Notification", "Notification sent", "good");
+      }
+      if (notifications.length && !voiceState.notificationsAnnounced) {
+        voiceState.notificationsAnnounced = true;
+        const notificationMessage = "The cab details have also been shared on chat, SMS, and WhatsApp.";
+        voiceLog.textContent = notificationMessage;
+        playBeep(820, 120);
+        speak(notificationMessage);
+      }
+      cabVoiceState.set(lead.customer_name || "default", voiceState);
+    }
+
     function resetBoards() {
       leadList.innerHTML = "";
       eventList.innerHTML = "";
       leads.clear();
+      cabVoiceState.clear();
+      resetCabPanel();
     }
 
     function manualPayload() {
@@ -532,6 +850,10 @@ def live_dashboard() -> HTMLResponse:
             customer_name: document.getElementById("customerName").value.trim() || "Demo Lead",
             inquiry: document.getElementById("inquiry").value.trim(),
             segment: document.getElementById("segment").value,
+            profession: document.getElementById("profession").value.trim() || null,
+            total_experience_years: numberOrNull(document.getElementById("totalExperienceYears").value.trim()),
+            employment_type: document.getElementById("employmentType").value || null,
+            customer_location: document.getElementById("customerLocation").value.trim() || null,
             budget: numberOrNull(document.getElementById("budget").value.trim()),
             location: document.getElementById("location").value.trim() || null,
             timeline_days: numberOrNull(document.getElementById("timelineDays").value.trim()),
@@ -548,10 +870,14 @@ def live_dashboard() -> HTMLResponse:
     function loadWhitefieldExample() {
       document.getElementById("leadId").value = "manual_res_001";
       document.getElementById("customerName").value = "Aarav Mehta";
+      document.getElementById("profession").value = "software engineer";
+      document.getElementById("employmentType").value = "salaried";
       document.getElementById("segment").value = "residential";
       document.getElementById("location").value = "Whitefield";
+      document.getElementById("customerLocation").value = "Marathahalli";
       document.getElementById("budget").value = "9500000";
       document.getElementById("timelineDays").value = "30";
+      document.getElementById("totalExperienceYears").value = "7";
       document.getElementById("propertyType").value = "2BHK apartment";
       document.getElementById("businessType").value = "";
       document.getElementById("squareFeetMin").value = "";
@@ -564,10 +890,14 @@ def live_dashboard() -> HTMLResponse:
     function loadCommercialExample() {
       document.getElementById("leadId").value = "manual_com_001";
       document.getElementById("customerName").value = "Bean Street Cafe";
+      document.getElementById("profession").value = "founder";
+      document.getElementById("employmentType").value = "business";
       document.getElementById("segment").value = "commercial";
       document.getElementById("location").value = "CBD Retail District";
+      document.getElementById("customerLocation").value = "Indiranagar";
       document.getElementById("budget").value = "320000";
       document.getElementById("timelineDays").value = "45";
+      document.getElementById("totalExperienceYears").value = "11";
       document.getElementById("propertyType").value = "";
       document.getElementById("businessType").value = "cafe";
       document.getElementById("squareFeetMin").value = "2500";
@@ -588,26 +918,212 @@ def live_dashboard() -> HTMLResponse:
       loadDefaultButton.textContent = segment === "commercial" ? "Load Residential Example" : "Load Whitefield Example";
     }
 
-    function speak(text) {
+    function preferredVoice() {
       if (!playbackSupported) {
+        return null;
+      }
+      const voices = window.speechSynthesis.getVoices();
+      return voices.find((voice) => {
+        const name = String(voice.name || "").toLowerCase();
+        return name.includes("google") || name.includes("microsoft") || String(voice.lang || "").toLowerCase().startsWith("en");
+      }) || voices[0] || null;
+    }
+
+    function speak(text, callbacks = {}) {
+      if (!playbackSupported || !text) {
+        if (callbacks.onend) callbacks.onend();
         return;
       }
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1;
+      utterance.voice = preferredVoice();
+      utterance.rate = 0.98;
       utterance.pitch = 1;
+      utterance.volume = 1;
+      utterance.onend = () => {
+        if (callbacks.onend) callbacks.onend();
+      };
+      utterance.onerror = () => {
+        if (callbacks.onerror) callbacks.onerror();
+        if (callbacks.onend) callbacks.onend();
+      };
       window.speechSynthesis.speak(utterance);
     }
 
-    function waitForSpeech(promptText, retries = 2) {
+    function stopSpeechPlayback() {
+      if (playbackSupported) {
+        window.speechSynthesis.cancel();
+      }
+    }
+
+    function playBeep(frequency = 880, durationMs = 140) {
+      if (!AudioContextClass) return;
+      try {
+        const context = new AudioContextClass();
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        gainNode.gain.setValueAtTime(0.001, context.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + durationMs / 1000);
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + durationMs / 1000);
+        oscillator.onended = () => {
+          context.close().catch(() => {});
+        };
+      } catch (error) {
+        // Ignore audio context errors when browser blocks autoplay.
+      }
+    }
+
+    function heardSkipIntent(text) {
+      const normalized = String(text || "").trim().toLowerCase();
+      return normalized === "skip" || normalized === "not required" || normalized.includes("skip") || normalized.includes("not required");
+    }
+
+    function cleanSpokenText(text) {
+      return String(text || "")
+        .replace(/\bdouble\b/gi, "2")
+        .replace(/\btriple\b/gi, "3")
+        .replace(/\bfour bedroom\b/gi, "4 bhk")
+        .replace(/\bthree bedroom\b/gi, "3 bhk")
+        .replace(/\btwo bedroom\b/gi, "2 bhk")
+        .replace(/\bone bedroom\b/gi, "1 bhk")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function parseEmploymentType(text) {
+      const normalized = cleanSpokenText(text).toLowerCase();
+      if (normalized.includes("business")) return "business";
+      if (normalized.includes("self")) return "self-employed";
+      return "salaried";
+    }
+
+    function parseSegment(text) {
+      const normalized = cleanSpokenText(text).toLowerCase();
+      return normalized.includes("commercial") ? "commercial" : "residential";
+    }
+
+    function parseBudgetValue(text) {
+      const normalized = cleanSpokenText(text).toLowerCase();
+      const digits = normalized.replace(/[^0-9]/g, "");
+      if (!digits) return "";
+      const numeric = Number(digits);
+      if (normalized.includes("crore")) return String(numeric * 10000000);
+      if (normalized.includes("lakh") || normalized.includes("lakhs")) return String(numeric * 100000);
+      return String(numeric);
+    }
+
+    function parseDaysValue(text) {
+      const digits = cleanSpokenText(text).replace(/[^0-9]/g, "");
+      return digits || "";
+    }
+
+    function parseSquareFeetValue(text) {
+      const digits = cleanSpokenText(text).replace(/[^0-9]/g, "");
+      return digits || "";
+    }
+
+    function inferLocation(text) {
+      const normalized = cleanSpokenText(text);
+      const knownLocations = [
+        "Whitefield",
+        "Marathahalli",
+        "Sarjapur",
+        "Indiranagar",
+        "Koramangala",
+        "HSR Layout",
+        "Banashankari",
+        "MG Road",
+        "CBD Retail District",
+      ];
+      const matched = knownLocations.find((item) => normalized.toLowerCase().includes(item.toLowerCase()));
+      if (matched) return matched;
+      return normalized.replace(/^(in|at|from|near)\s+/i, "").trim();
+    }
+
+    function inferResidentialPropertyType(text) {
+      const normalized = cleanSpokenText(text).toLowerCase();
+      if (normalized.includes("4 bhk")) return "4BHK apartment";
+      if (normalized.includes("3 bhk")) return "3BHK apartment";
+      if (normalized.includes("2 bhk")) return "2BHK apartment";
+      if (normalized.includes("1 bhk")) return "1BHK apartment";
+      if (normalized.includes("villa")) return "villa";
+      if (normalized.includes("plot")) return "plot";
+      return cleanSpokenText(text);
+    }
+
+    function inferBusinessType(text) {
+      const normalized = cleanSpokenText(text).toLowerCase();
+      if (normalized.includes("cafe")) return "cafe";
+      if (normalized.includes("restaurant")) return "restaurant";
+      if (normalized.includes("office")) return "office";
+      if (normalized.includes("retail")) return "retail";
+      return cleanSpokenText(text);
+    }
+
+    function applyVoiceIntelligence() {
+      const inquiry = cleanSpokenText(document.getElementById("inquiry").value);
+      const segment = document.getElementById("segment").value;
+      const locationInput = document.getElementById("location");
+      const pickupInput = document.getElementById("customerLocation");
+      const budgetInput = document.getElementById("budget");
+      const timelineInput = document.getElementById("timelineDays");
+
+      if (inquiry) {
+        if (!locationInput.value.trim()) {
+          const inferredLocation = inferLocation(inquiry);
+          if (inferredLocation) {
+            locationInput.value = inferredLocation;
+          }
+        }
+        if (!budgetInput.value.trim()) {
+          const inferredBudget = parseBudgetValue(inquiry);
+          if (inferredBudget) {
+            budgetInput.value = inferredBudget;
+          }
+        }
+        if (!timelineInput.value.trim()) {
+          const inferredTimeline = parseDaysValue(inquiry);
+          if (inferredTimeline) {
+            timelineInput.value = inferredTimeline;
+          }
+        }
+        if (segment === "residential") {
+          const propertyTypeInput = document.getElementById("propertyType");
+          if (!propertyTypeInput.value.trim()) {
+            propertyTypeInput.value = inferResidentialPropertyType(inquiry);
+          }
+          if (!pickupInput.value.trim() && inquiry.toLowerCase().includes("pickup")) {
+            pickupInput.value = inferLocation(inquiry);
+          }
+        } else {
+          const businessTypeInput = document.getElementById("businessType");
+          if (!businessTypeInput.value.trim()) {
+            businessTypeInput.value = inferBusinessType(inquiry);
+          }
+        }
+      }
+    }
+
+    function waitForSpeech(promptText, options = {}) {
       if (!recognitionSupported) {
         return Promise.reject(new Error("Speech recognition is not supported in this browser."));
       }
 
+      const {
+        retries = 1,
+        spokenPrompt = true,
+        timeoutMs = 4500,
+        allowSkip = false,
+        emptyValue = "",
+      } = options;
+
       voiceLog.textContent = promptText;
-      if (playbackSupported) {
-        speak(promptText);
-      }
 
       return new Promise((resolve, reject) => {
         const recognition = new SpeechRecognition();
@@ -615,10 +1131,9 @@ def live_dashboard() -> HTMLResponse:
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
         recognition.continuous = true;
-        recognitionTimeout = null;
 
         let settled = false;
-        let recognitionTimeout;
+        let recognitionTimeout = null;
         let finalTranscript = "";
 
         recognition.onresult = (event) => {
@@ -634,6 +1149,14 @@ def live_dashboard() -> HTMLResponse:
           const heard = (finalTranscript || interimTranscript).trim();
           if (heard) {
             voiceLog.textContent = `Heard: ${heard}`;
+            if (allowSkip && heardSkipIntent(heard)) {
+              settled = true;
+              try {
+                recognition.stop();
+              } catch (error) {
+                // ignore
+              }
+            }
           }
         };
         recognition.onerror = (event) => {
@@ -642,7 +1165,12 @@ def live_dashboard() -> HTMLResponse:
           const code = event.error || "speech_error";
           if ((code === "no-speech" || code === "audio-capture") && retries > 0) {
             voiceLog.textContent = "I did not catch that. Trying once more...";
-            resolve(waitForSpeech(promptText, retries - 1));
+            resolve(waitForSpeech(promptText, { retries: retries - 1, spokenPrompt, timeoutMs, allowSkip, emptyValue }));
+            return;
+          }
+          if ((code === "no-speech" || code === "audio-capture") && allowSkip) {
+            voiceLog.textContent = "No response captured. Marked as not required.";
+            resolve(emptyValue);
             return;
           }
           reject(new Error(code));
@@ -650,15 +1178,29 @@ def live_dashboard() -> HTMLResponse:
         recognition.onend = () => {
           recognitionBusy = false;
           const heard = finalTranscript.trim();
+          if (allowSkip && heardSkipIntent(heard)) {
+            settled = true;
+            playBeep(740, 120);
+            voiceLog.textContent = "Marked as not required.";
+            resolve(emptyValue);
+            return;
+          }
           if (heard) {
             settled = true;
+            playBeep(660, 120);
+            voiceLog.textContent = `Heard: ${heard}`;
             resolve(heard);
             return;
           }
           if (!settled) {
             if (retries > 0) {
               voiceLog.textContent = "No speech captured. Trying again, please speak after the prompt.";
-              resolve(waitForSpeech(promptText, retries - 1));
+              resolve(waitForSpeech(promptText, { retries: retries - 1, spokenPrompt, timeoutMs, allowSkip, emptyValue }));
+              return;
+            }
+            if (allowSkip) {
+              voiceLog.textContent = "No response captured. Marked as not required.";
+              resolve(emptyValue);
               return;
             }
             reject(new Error("no_speech_captured"));
@@ -667,24 +1209,22 @@ def live_dashboard() -> HTMLResponse:
 
         recognitionBusy = true;
         const startRecognition = () => {
+          voiceLog.textContent = `${promptText} Listening now...`;
           window.setTimeout(() => {
+            playBeep(900, 90);
             recognition.start();
-          }, 350);
+          }, 80);
           recognitionTimeout = window.setTimeout(() => {
             try {
               recognition.stop();
             } catch (error) {
               // Ignore stop errors from already-ended sessions.
             }
-          }, 12000);
+          }, timeoutMs);
         };
-        if (playbackSupported && promptText) {
-          const utterance = new SpeechSynthesisUtterance(promptText);
-          utterance.rate = 1;
-          utterance.pitch = 1;
-          utterance.onend = startRecognition;
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
+        stopSpeechPlayback();
+        if (spokenPrompt && promptText) {
+          speak(promptText, { onend: startRecognition });
         } else {
           startRecognition();
         }
@@ -702,45 +1242,57 @@ def live_dashboard() -> HTMLResponse:
       }
 
       try {
-        const name = await waitForSpeech("Tell me the customer name.");
+        stopSpeechPlayback();
+        const name = await waitForSpeech("Tell me the customer name.", { retries: 0, timeoutMs: 4000 });
         document.getElementById("customerName").value = name;
 
-        const segmentAnswer = (await waitForSpeech("Is this a residential or commercial lead?")).toLowerCase();
-        if (segmentAnswer.includes("commercial")) {
-          segmentSelect.value = "commercial";
-          syncSegmentFields();
-        } else {
-          segmentSelect.value = "residential";
-          syncSegmentFields();
-        }
+        const employmentType = await waitForSpeech("Is the customer salaried, in business, or self-employed?", { retries: 0, timeoutMs: 4000 });
+        document.getElementById("employmentType").value = parseEmploymentType(employmentType);
 
-        const location = await waitForSpeech("What is the preferred location?");
-        document.getElementById("location").value = location;
+        const segmentAnswer = await waitForSpeech("Is this a residential or commercial lead?", { retries: 0, timeoutMs: 3500 });
+        segmentSelect.value = parseSegment(segmentAnswer);
+        syncSegmentFields();
 
-        const budget = await waitForSpeech("What is the budget?");
-        document.getElementById("budget").value = budget.replace(/[^0-9]/g, "");
+        const location = await waitForSpeech("What is the preferred location?", { retries: 0, timeoutMs: 4000 });
+        document.getElementById("location").value = inferLocation(location);
 
-        const timeline = await waitForSpeech("What is the timeline in days?");
-        document.getElementById("timelineDays").value = timeline.replace(/[^0-9]/g, "");
+        const customerLocation = await waitForSpeech(
+          "What is the customer's current pickup location? You can say skip or not required.",
+          { retries: 0, timeoutMs: 5000, allowSkip: true, emptyValue: "" }
+        );
+        document.getElementById("customerLocation").value = heardSkipIntent(customerLocation) ? "" : inferLocation(customerLocation);
+
+        const budget = await waitForSpeech("What is the budget?", { retries: 0, timeoutMs: 4000 });
+        document.getElementById("budget").value = parseBudgetValue(budget);
+
+        const timeline = await waitForSpeech("What is the timeline in days?", { retries: 0, timeoutMs: 3500 });
+        document.getElementById("timelineDays").value = parseDaysValue(timeline);
+        document.getElementById("profession").value = "";
+        document.getElementById("totalExperienceYears").value = "";
 
         if (segmentSelect.value === "commercial") {
-          const businessType = await waitForSpeech("What type of business is this lead for?");
-          document.getElementById("businessType").value = businessType;
+          const businessType = await waitForSpeech("What type of business is this lead for?", { retries: 0, timeoutMs: 4000 });
+          document.getElementById("businessType").value = inferBusinessType(businessType);
 
-          const sqftMin = await waitForSpeech("What is the minimum square footage required?");
-          document.getElementById("squareFeetMin").value = sqftMin.replace(/[^0-9]/g, "");
+          const sqftMin = await waitForSpeech("What is the minimum square footage required?", { retries: 0, timeoutMs: 3500 });
+          document.getElementById("squareFeetMin").value = parseSquareFeetValue(sqftMin);
 
-          const sqftMax = await waitForSpeech("What is the maximum square footage required?");
-          document.getElementById("squareFeetMax").value = sqftMax.replace(/[^0-9]/g, "");
+          const sqftMax = await waitForSpeech("What is the maximum square footage required?", { retries: 0, timeoutMs: 3500 });
+          document.getElementById("squareFeetMax").value = parseSquareFeetValue(sqftMax);
         } else {
-          const propertyType = await waitForSpeech("What property type does the customer want?");
-          document.getElementById("propertyType").value = propertyType;
+          const propertyType = await waitForSpeech("What property type does the customer want?", { retries: 0, timeoutMs: 4000 });
+          document.getElementById("propertyType").value = inferResidentialPropertyType(propertyType);
         }
 
-        const inquiry = await waitForSpeech("Now describe the inquiry in one sentence.");
-        document.getElementById("inquiry").value = inquiry;
+        const inquiry = await waitForSpeech("Now describe the inquiry in one sentence.", { retries: 0, timeoutMs: 5000 });
+        document.getElementById("inquiry").value = cleanSpokenText(inquiry);
+        applyVoiceIntelligence();
         document.getElementById("leadId").value = `voice_${segmentSelect.value}_${Date.now()}`;
-        voiceLog.textContent = "Voice intake completed. Review the form and run the lead.";
+        const finalMessage = "Thank you for the answers. I have captured the lead details and I am starting the workflow now.";
+        voiceLog.textContent = finalMessage;
+        playBeep(720, 150);
+        await new Promise((resolve) => speak(finalMessage, { onend: resolve }));
+        await runManualLead();
       } catch (error) {
         voiceLog.textContent = `Voice intake stopped: ${error.message}`;
       }
@@ -756,9 +1308,10 @@ def live_dashboard() -> HTMLResponse:
         return;
       }
       try {
-        voiceLog.textContent = "Listening for inquiry...";
-        const inquiry = await waitForSpeech("");
-        document.getElementById("inquiry").value = inquiry;
+        stopSpeechPlayback();
+        const inquiry = await waitForSpeech("Please describe the customer inquiry.", { retries: 0, spokenPrompt: false, timeoutMs: 5000 });
+        document.getElementById("inquiry").value = cleanSpokenText(inquiry);
+        applyVoiceIntelligence();
         voiceLog.textContent = "Inquiry updated from voice input.";
       } catch (error) {
         voiceLog.textContent = `Dictation stopped: ${error.message}`;
@@ -804,7 +1357,8 @@ def live_dashboard() -> HTMLResponse:
             leads.set(event.lead_id, {
               customer_name: event.payload.customer_name,
               inquiry: event.payload.inquiry,
-              stage: "received"
+              stage: "received",
+              segment: event.payload.segment || document.getElementById("segment").value
             });
             renderLeadCard(event.lead_id);
           }
@@ -819,6 +1373,7 @@ def live_dashboard() -> HTMLResponse:
             }
             leads.set(event.lead_id, lead);
             renderLeadCard(event.lead_id);
+            updateCabPanelFromPayload(event.payload, lead);
           }
 
           if (event.event === "lead_completed") {

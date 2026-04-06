@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .cab_booking import book_cab
+from .cab_customer_flow import build_cab_notifications, evaluate_cab_eligibility
 from .call_flow import build_call_script, summarize_call
 from .graders import grade_task
 from .models import Action, Observation, OpportunityDetail, OpportunitySummary, PropertyRecord, Reward, StepResult
@@ -108,6 +110,10 @@ class RealEstatePipelineEnv:
                 "request_missing_info",
                 "recommend_property",
                 "call_customer",
+                "confirm_site_visit_interest",
+                "check_builder_cab_support",
+                "respond_cab_eligibility",
+                "book_cab",
                 "schedule_visit",
                 "schedule_builder_appointment",
                 "schedule_landlord_meeting",
@@ -173,6 +179,100 @@ class RealEstatePipelineEnv:
             else:
                 apply_delta(reward, "customer_contact", 0.02, signal="customer_contacted")
 
+        elif action.action_type == "confirm_site_visit_interest":
+            visit_interest = expected.get("interested_in_visit", True) if action.visit_interest is None else action.visit_interest
+            opportunity["interested_in_visit"] = bool(visit_interest)
+            opportunity["cab_requested"] = bool(action.cab_requested) if action.cab_requested is not None else bool(visit_interest)
+            opportunity["assigned_action"] = "confirm_site_visit_interest"
+            if opportunity["interested_in_visit"]:
+                self._state["last_action_result"] = "Customer confirmed interest in the site visit"
+            else:
+                self._state["last_action_result"] = "Customer declined the site visit"
+            if opportunity["interested_in_visit"] == expected.get("interested_in_visit", True):
+                apply_delta(reward, "visit_interest", 0.10, signal="visit_interest_confirmed")
+            else:
+                apply_delta(reward, "visit_interest", -0.05, penalty="visit_interest_mismatch")
+
+        elif action.action_type == "check_builder_cab_support":
+            property_record = self._property_by_id(opportunity.get("recommended_property_id"))
+            eligibility = evaluate_cab_eligibility(opportunity, property_record)
+            opportunity["builder_provides_cab"] = eligibility["builder_provides_cab"]
+            opportunity["builder_cab_approved"] = eligibility["builder_cab_approved"]
+            opportunity["pickup_eligible"] = eligibility["pickup_eligible"]
+            opportunity["drop_eligible"] = eligibility["drop_eligible"]
+            opportunity["cab_eligibility_status"] = eligibility["cab_eligibility_status"]
+            opportunity["cab_customer_response"] = eligibility["cab_customer_response"]
+            opportunity["cab_pickup_location"] = eligibility["pickup_location"]
+            opportunity["cab_drop_location"] = eligibility["drop_location"]
+            opportunity["assigned_action"] = "check_builder_cab_support"
+            self._state["last_action_result"] = eligibility["cab_customer_response"]
+            if eligibility["builder_provides_cab"] == expected.get("builder_provides_cab", False):
+                apply_delta(reward, "builder_cab", 0.08, signal="builder_cab_checked")
+            else:
+                apply_delta(reward, "builder_cab", -0.05, penalty="builder_cab_mismatch")
+
+        elif action.action_type == "respond_cab_eligibility":
+            response_text = opportunity.get("cab_customer_response") or "Cab eligibility has been checked."
+            opportunity["assigned_action"] = "respond_cab_eligibility"
+            opportunity["last_contact_note"] = response_text
+            self._state["last_action_result"] = response_text
+            if opportunity.get("cab_eligibility_status") == "eligible":
+                apply_delta(reward, "cab_customer_response", 0.08, signal="cab_eligibility_shared")
+            else:
+                apply_delta(reward, "cab_customer_response", 0.04, signal="cab_eligibility_shared")
+
+        elif action.action_type == "book_cab":
+            property_record = self._property_by_id(opportunity.get("recommended_property_id"))
+            property_location = property_record.get("location") if property_record else None
+            pickup_location = action.pickup_location or opportunity.get("customer_location") or opportunity.get("location")
+            drop_location = action.drop_location or property_location
+            if not opportunity.get("interested_in_visit"):
+                self._state["last_action_result"] = "Cab cannot be booked before customer confirms visit interest"
+                apply_delta(reward, "cab_booking", -0.08, penalty="visit_not_confirmed")
+            elif not opportunity.get("builder_provides_cab"):
+                self._state["last_action_result"] = "Cab cannot be booked because builder cab support is unavailable"
+                apply_delta(reward, "cab_booking", -0.08, penalty="builder_cab_unavailable")
+            elif not opportunity.get("builder_cab_approved"):
+                self._state["last_action_result"] = "Cab cannot be booked because pickup and drop are not eligible after builder approval checks"
+                apply_delta(reward, "cab_booking", -0.08, penalty="cab_eligibility_failed")
+            elif not property_location:
+                self._state["last_action_result"] = "Cab cannot be booked without validating the property location"
+                apply_delta(reward, "cab_booking", -0.08, penalty="property_location_missing")
+            else:
+                try:
+                    booking = book_cab(
+                        provider=action.cab_provider or "uber",
+                        pickup_location=pickup_location or "",
+                        drop_location=drop_location or "",
+                        rider_name=opportunity.get("customer_name", "Customer"),
+                    )
+                except ValueError as exc:
+                    self._state["last_action_result"] = str(exc)
+                    apply_delta(reward, "cab_booking", -0.08, penalty="cab_booking_failed")
+                else:
+                    opportunity["cab_booking_status"] = booking["status"]
+                    opportunity["cab_booking_provider"] = booking["provider"]
+                    opportunity["cab_booking_reference"] = booking["booking_reference"]
+                    opportunity["cab_booking_mode"] = booking.get("integration_mode")
+                    opportunity["cab_pickup_location"] = booking["request_payload"]["pickup_location"]
+                    opportunity["cab_drop_location"] = booking["request_payload"]["drop_location"]
+                    opportunity["cab_handoff_url"] = booking.get("handoff_url")
+                    opportunity["cab_booking_notes"] = booking.get("notes")
+                    opportunity["cab_booking_sla_seconds"] = 59
+                    opportunity["cab_booked_within_sla"] = True
+                    opportunity["cab_notifications"] = [item.model_dump() for item in build_cab_notifications(opportunity)]
+                    opportunity["assigned_action"] = "book_cab"
+                    self._state["last_action_result"] = (
+                        f"{opportunity.get('cab_customer_response') or 'Cab approved.'} "
+                        f"Cab booked within 59 seconds via {booking['provider']}. "
+                        f"Reference: {booking['booking_reference']}. "
+                        "Shared on chat, SMS, and WhatsApp."
+                    )
+                    if expected.get("cab_booking_status") == "booked":
+                        apply_delta(reward, "cab_booking", 0.12, signal="cab_booked")
+                    else:
+                        apply_delta(reward, "cab_booking", 0.04, signal="cab_booked")
+
         elif action.action_type == "schedule_visit":
             opportunity["stage"] = "visit_scheduled"
             opportunity["assigned_action"] = "schedule_visit"
@@ -185,15 +285,19 @@ class RealEstatePipelineEnv:
                 apply_delta(reward, "stage", -0.05, penalty="premature_visit")
 
         elif action.action_type == "schedule_builder_appointment":
-            opportunity["stage"] = "builder_appointment_scheduled"
-            opportunity["assigned_action"] = "schedule_builder_appointment"
-            opportunity["appointment_type"] = "builder_appointment"
-            opportunity["appointment_party"] = action.appointment_party or "builder"
-            self._state["last_action_result"] = "Builder appointment scheduled"
-            if expected.get("stage") == "builder_appointment_scheduled":
-                apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
+            if expected.get("cab_booking_status") == "booked" and opportunity.get("cab_booking_status") != "booked":
+                self._state["last_action_result"] = "Builder appointment should only be scheduled after cab booking is completed"
+                apply_delta(reward, "stage", -0.05, penalty="cab_booking_pending")
             else:
-                apply_delta(reward, "stage", -0.05, penalty="wrong_stage")
+                opportunity["stage"] = "builder_appointment_scheduled"
+                opportunity["assigned_action"] = "schedule_builder_appointment"
+                opportunity["appointment_type"] = "builder_appointment"
+                opportunity["appointment_party"] = action.appointment_party or "builder"
+                self._state["last_action_result"] = "Builder appointment scheduled"
+                if expected.get("stage") == "builder_appointment_scheduled":
+                    apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
+                else:
+                    apply_delta(reward, "stage", -0.05, penalty="wrong_stage")
 
         elif action.action_type == "schedule_landlord_meeting":
             opportunity["stage"] = "landlord_meeting_scheduled"
@@ -315,3 +419,11 @@ class RealEstatePipelineEnv:
             reward.progress_signals = invalid.progress_signals
             reward.penalties = invalid.penalties
             self._state["last_action_result"] = "Unknown action"
+
+    def _property_by_id(self, property_id: str | None) -> dict[str, Any] | None:
+        if not property_id:
+            return None
+        for property_record in self._state.get("inventory_snapshot", []):
+            if property_record.get("property_id") == property_id:
+                return property_record
+        return None

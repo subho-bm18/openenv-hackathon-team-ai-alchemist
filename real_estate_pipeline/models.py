@@ -17,6 +17,13 @@ class CallTurn(BaseModel):
     text: str
 
 
+class NotificationMessage(BaseModel):
+    channel: Literal["chat", "sms", "whatsapp"]
+    recipient: str
+    message: str
+    delivery_status: str = "sent"
+
+
 class OpportunitySummary(BaseModel):
     opportunity_id: str
     segment: Literal["residential", "commercial"]
@@ -40,6 +47,11 @@ class OpportunityDetail(BaseModel):
     segment: Literal["residential", "commercial"]
     customer_name: str
     inquiry: str
+    profession: str | None = None
+    total_experience_years: int | None = None
+    employment_type: str | None = None
+    preferred_cab_provider: str | None = None
+    customer_location: str | None = None
     budget: int | None = None
     location: str | None = None
     timeline_days: int | None = None
@@ -55,6 +67,25 @@ class OpportunityDetail(BaseModel):
     recommended_property_id: str | None = None
     lease_terms: LeaseTerms | None = None
     customer_contacted: bool = False
+    interested_in_visit: bool | None = None
+    cab_requested: bool | None = None
+    builder_provides_cab: bool | None = None
+    builder_cab_approved: bool | None = None
+    pickup_eligible: bool | None = None
+    drop_eligible: bool | None = None
+    cab_eligibility_status: str | None = None
+    cab_customer_response: str | None = None
+    cab_booking_status: str | None = None
+    cab_booking_provider: str | None = None
+    cab_booking_reference: str | None = None
+    cab_booking_mode: str | None = None
+    cab_pickup_location: str | None = None
+    cab_drop_location: str | None = None
+    cab_handoff_url: str | None = None
+    cab_booking_notes: str | None = None
+    cab_booking_sla_seconds: int | None = None
+    cab_booked_within_sla: bool | None = None
+    cab_notifications: list[NotificationMessage] = Field(default_factory=list)
     last_contact_note: str | None = None
     call_outcome: str | None = None
     call_transcript: list[CallTurn] = Field(default_factory=list)
@@ -95,6 +126,10 @@ class Action(BaseModel):
         "request_missing_info",
         "recommend_property",
         "call_customer",
+        "confirm_site_visit_interest",
+        "check_builder_cab_support",
+        "respond_cab_eligibility",
+        "book_cab",
         "schedule_visit",
         "schedule_builder_appointment",
         "schedule_landlord_meeting",
@@ -114,6 +149,11 @@ class Action(BaseModel):
     requested_fields: list[str] = Field(default_factory=list)
     property_id: str | None = None
     message: str | None = None
+    visit_interest: bool | None = None
+    cab_requested: bool | None = None
+    cab_provider: str | None = None
+    pickup_location: str | None = None
+    drop_location: str | None = None
     appointment_party: str | None = None
     closing_value: int | None = None
     lease_terms: LeaseTerms | None = None
@@ -134,6 +174,11 @@ class InboundLead(BaseModel):
     customer_name: str
     inquiry: str
     segment: Literal["residential", "commercial"] = "residential"
+    profession: str | None = None
+    total_experience_years: int | None = None
+    employment_type: str | None = None
+    preferred_cab_provider: str | None = None
+    customer_location: str | None = None
     budget: int | None = None
     location: str | None = None
     timeline_days: int | None = None

@@ -12,13 +12,19 @@ def choose_category(opportunity: Any) -> str:
 def lead_readiness_score(opportunity: Any) -> float:
     score = 0.0
     if value_of(opportunity, "budget"):
-        score += 0.3
+        score += 0.22
     if value_of(opportunity, "timeline_days"):
-        score += 0.2
+        score += 0.16
     if value_of(opportunity, "location"):
-        score += 0.2
+        score += 0.16
     if value_of(opportunity, "property_type") or value_of(opportunity, "business_type"):
-        score += 0.2
+        score += 0.16
+    if value_of(opportunity, "profession"):
+        score += 0.1
+    if value_of(opportunity, "employment_type"):
+        score += 0.1
+    if value_of(opportunity, "total_experience_years") is not None:
+        score += 0.1
 
     missing_fields = value_of(opportunity, "missing_fields") or []
     score -= min(len(missing_fields) * 0.1, 0.3)

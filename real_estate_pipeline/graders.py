@@ -33,6 +33,21 @@ def grade_task(task: dict[str, Any], state: dict[str, Any]) -> float:
             opportunity.get("customer_contacted"),
             expected.get("customer_contacted"),
         )
+    if "visit_interest" in expected.get("weights", {}):
+        score += expected["weights"].get("visit_interest", 0.0) * _boolean_alignment_score(
+            opportunity.get("interested_in_visit"),
+            expected.get("interested_in_visit"),
+        )
+    if "builder_cab" in expected.get("weights", {}):
+        score += expected["weights"].get("builder_cab", 0.0) * _boolean_alignment_score(
+            opportunity.get("builder_provides_cab"),
+            expected.get("builder_provides_cab"),
+        )
+    if "cab_booking" in expected.get("weights", {}):
+        score += expected["weights"].get("cab_booking", 0.0) * _status_alignment_score(
+            opportunity.get("cab_booking_status"),
+            expected.get("cab_booking_status"),
+        )
     if "proposal_sent" in expected.get("weights", {}):
         score += expected["weights"].get("proposal_sent", 0.0) * _boolean_alignment_score(
             opportunity.get("proposal_sent"),
@@ -104,3 +119,9 @@ def _boolean_alignment_score(actual: bool | None, expected: bool | None) -> floa
     if expected is None:
         return 0.0
     return 1.0 if bool(actual) == bool(expected) else 0.0
+
+
+def _status_alignment_score(actual: str | None, expected: str | None) -> float:
+    if expected is None:
+        return 0.0
+    return 1.0 if actual == expected else 0.0

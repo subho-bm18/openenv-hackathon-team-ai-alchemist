@@ -33,7 +33,7 @@ DEFAULT_INVENTORY: list[dict[str, Any]] = [
         "location": "Whitefield",
         "price_type": "sale",
         "price": 9200000,
-        "details": {"property_type": "2BHK apartment", "bedrooms": 2},
+        "details": {"property_type": "2BHK apartment", "bedrooms": 2, "builder_cab_available": True},
     },
     {
         "property_id": "res_prop_102",
@@ -42,7 +42,7 @@ DEFAULT_INVENTORY: list[dict[str, Any]] = [
         "location": "Sarjapur",
         "price_type": "sale",
         "price": 11800000,
-        "details": {"property_type": "3BHK apartment", "bedrooms": 3},
+        "details": {"property_type": "3BHK apartment", "bedrooms": 3, "builder_cab_available": False},
     },
     {
         "property_id": "com_prop_301",
@@ -62,6 +62,10 @@ DEFAULT_LIVE_LEADS: list[InboundLead] = [
         customer_name="Aarav Mehta",
         inquiry="Looking for a 2BHK apartment in Whitefield. Budget is 95 lakhs and I want to move in within 30 days. Please suggest options.",
         segment="residential",
+        profession="software engineer",
+        total_experience_years=7,
+        employment_type="salaried",
+        customer_location="Marathahalli",
         budget=9500000,
         location="Whitefield",
         timeline_days=30,
@@ -77,15 +81,22 @@ DEFAULT_STREAM_LEADS: list[InboundLead] = [
         customer_name="Neha Singh",
         inquiry="I am looking for a 3-bedroom home on the west side. Please share options.",
         segment="residential",
+        profession="marketing consultant",
+        employment_type="business",
+        customer_location="Banashankari",
         location="West Side",
         property_type="3-bedroom home",
-        missing_fields=["budget", "timeline_days", "financing_status"],
+        missing_fields=["budget", "timeline_days", "financing_status", "total_experience_years"],
     ),
     InboundLead(
         lead_id="live_com_001",
         customer_name="Bean Street Cafe",
         inquiry="We need 2500 to 3000 square feet in a high-footfall retail street. Our opening target is in 45 days. We can stretch to 3.2 lakh monthly if the fit and frontage are strong.",
         segment="commercial",
+        profession="founder",
+        total_experience_years=11,
+        employment_type="business",
+        customer_location="Indiranagar",
         budget=320000,
         location="CBD Retail District",
         timeline_days=45,
@@ -167,6 +178,75 @@ class LiveTrafficAgent:
                     action_type="call_customer",
                     opportunity_id=opportunity_id,
                     message=f"Called the customer to {contact_purpose}.",
+                ),
+            )
+
+        if opportunity.segment == "residential" and opportunity.customer_contacted and opportunity.interested_in_visit is None:
+            return (
+                "The residential lead is qualified, so confirm whether the customer actually wants to take the site visit.",
+                Action(
+                    action_type="confirm_site_visit_interest",
+                    opportunity_id=opportunity_id,
+                    visit_interest=True,
+                    cab_requested=True,
+                    message="Confirmed whether the customer wants to visit the shortlisted property.",
+                ),
+            )
+
+        if opportunity.segment == "residential" and opportunity.interested_in_visit is False:
+            return (
+                "The customer is not ready for a visit yet, so keep the lead in nurture until interest changes.",
+                Action(
+                    action_type="move_to_nurture",
+                    opportunity_id=opportunity_id,
+                    message="Customer is not ready for a site visit yet. Keep the lead warm in nurture.",
+                ),
+            )
+
+        if opportunity.segment == "residential" and opportunity.interested_in_visit and opportunity.builder_provides_cab is None:
+            return (
+                "Before arranging transport, verify builder approval and whether both pickup and drop are eligible for the shortlisted property.",
+                Action(
+                    action_type="check_builder_cab_support",
+                    opportunity_id=opportunity_id,
+                    property_id=opportunity.recommended_property_id,
+                    message="Checked builder approval and pickup/drop eligibility for cab support.",
+                ),
+            )
+
+        if (
+            opportunity.segment == "residential"
+            and opportunity.interested_in_visit
+            and opportunity.cab_requested
+            and opportunity.cab_eligibility_status
+            and opportunity.cab_booking_status != "booked"
+            and opportunity.assigned_action != "respond_cab_eligibility"
+        ):
+            return (
+                "Share the eligibility result with the customer before attempting the booking so the pickup and drop outcome is explicit.",
+                Action(
+                    action_type="respond_cab_eligibility",
+                    opportunity_id=opportunity_id,
+                    message="Shared the cab pickup and drop eligibility result with the customer.",
+                ),
+            )
+
+        if (
+            opportunity.segment == "residential"
+            and opportunity.interested_in_visit
+            and opportunity.builder_provides_cab
+            and opportunity.builder_cab_approved
+            and opportunity.cab_booking_status != "booked"
+        ):
+            return (
+                "The customer wants to visit, pickup and drop are eligible, and the builder approved cab support, so place the booking immediately.",
+                Action(
+                    action_type="book_cab",
+                    opportunity_id=opportunity_id,
+                    property_id=opportunity.recommended_property_id,
+                    cab_provider=_preferred_cab_provider(opportunity),
+                    pickup_location=opportunity.customer_location or opportunity.location,
+                    message="Booked a cab for the customer site visit after confirming pickup and property location.",
                 ),
             )
 
@@ -256,7 +336,7 @@ class LiveTrafficAgent:
             )
 
         return (
-            "The lead is qualified, matched, and contacted, so the next best action is to book the builder appointment.",
+            "The lead is qualified, matched, and transport prerequisites are complete, so the next best action is to book the builder appointment.",
             Action(
                 action_type="schedule_builder_appointment",
                 opportunity_id=opportunity_id,
@@ -291,6 +371,11 @@ def build_runtime_task(lead: InboundLead, inventory: list[dict[str, Any]] | None
             "segment": segment,
             "customer_name": lead.customer_name,
             "inquiry": lead.inquiry,
+            "profession": lead.profession,
+            "total_experience_years": lead.total_experience_years,
+            "employment_type": lead.employment_type,
+            "preferred_cab_provider": lead.preferred_cab_provider,
+            "customer_location": lead.customer_location,
             "budget": lead.budget,
             "location": lead.location,
             "timeline_days": lead.timeline_days,
@@ -308,11 +393,11 @@ def build_runtime_task(lead: InboundLead, inventory: list[dict[str, Any]] | None
             "priority": priority,
             "customer_contacted": True,
             "weights": {
-                "category": 0.2,
-                "priority": 0.2,
+                "category": 0.15,
+                "priority": 0.15,
                 "property_match": 0.2,
-                "customer_contact": 0.15,
-                "stage": 0.25,
+                "customer_contact": 0.1,
+                "stage": 0.2,
             },
         },
     }
@@ -367,26 +452,55 @@ def build_runtime_task(lead: InboundLead, inventory: list[dict[str, Any]] | None
         }
         task["expected"]["stage"] = "deal_closed"
     else:
+        builder_provides_cab = bool((matching_property.get("details") or {}).get("builder_cab_available")) if matching_property else False
+        task["expected"]["interested_in_visit"] = True
+        task["expected"]["cab_requested"] = True
+        task["expected"]["builder_provides_cab"] = builder_provides_cab
+        if builder_provides_cab:
+            task["expected"]["builder_cab_approved"] = True
+            task["expected"]["pickup_eligible"] = True
+            task["expected"]["drop_eligible"] = True
+            task["expected"]["cab_booking_status"] = "booked"
+            task["expected"]["weights"].update(
+                {
+                    "visit_interest": 0.1,
+                    "builder_cab": 0.05,
+                    "cab_booking": 0.05,
+                }
+            )
+        else:
+            task["expected"]["weights"].update(
+                {
+                    "visit_interest": 0.1,
+                    "builder_cab": 0.05,
+                }
+            )
         task["expected"]["stage"] = "builder_appointment_scheduled"
 
     return task
 
 
-def simulate_live_traffic(leads: list[InboundLead] | None = None) -> LiveTrafficSimulationResponse:
+def simulate_live_traffic(
+    leads: list[InboundLead] | None = None,
+    inventory: list[dict[str, Any]] | None = None,
+) -> LiveTrafficSimulationResponse:
     run_id = datetime.now(timezone.utc).strftime("live-%Y%m%d%H%M%S")
     leads_to_process = leads or DEFAULT_LIVE_LEADS
-    results = [process_live_lead(lead) for lead in leads_to_process]
+    results = [process_live_lead(lead, inventory=inventory) for lead in leads_to_process]
     return LiveTrafficSimulationResponse(run_id=run_id, processed_leads=len(results), results=results)
 
 
-def process_live_lead(lead: InboundLead) -> LeadSimulationResult:
-    task = build_runtime_task(lead)
+def process_live_lead(
+    lead: InboundLead,
+    inventory: list[dict[str, Any]] | None = None,
+) -> LeadSimulationResult:
+    task = build_runtime_task(lead, inventory=inventory)
     return process_runtime_task(task, lead_id=lead.lead_id)
 
 
 def process_runtime_task(task: dict[str, Any], lead_id: str | None = None) -> LeadSimulationResult:
     agent = LiveTrafficAgent()
-    max_steps = 11 if task.get("opportunity", {}).get("segment") == "commercial" else 8
+    max_steps = 11 if task.get("opportunity", {}).get("segment") == "commercial" else 9
     env = RealEstatePipelineEnv(max_steps=max_steps)
     observation = env.reset_runtime(task)
     trace: list[AgentDecision] = []
@@ -443,11 +557,11 @@ def stream_live_traffic_events(
             event_type="lead_received",
             run_id=run_id,
             lead_id=lead.lead_id,
-            payload={"customer_name": lead.customer_name, "inquiry": lead.inquiry},
+            payload={"customer_name": lead.customer_name, "inquiry": lead.inquiry, "segment": lead.segment},
         )
 
         task = build_runtime_task(lead)
-        max_steps = 11 if lead.segment == "commercial" else 8
+        max_steps = 11 if lead.segment == "commercial" else 9
         env = RealEstatePipelineEnv(max_steps=max_steps)
         observation = env.reset_runtime(task)
         agent = LiveTrafficAgent()
@@ -467,6 +581,15 @@ def stream_live_traffic_events(
             if action.action_type == "call_customer":
                 payload["call_outcome"] = result.observation.active_opportunity.call_outcome
                 payload["call_transcript"] = [turn.model_dump() for turn in result.observation.active_opportunity.call_transcript]
+            if action.action_type in {"check_builder_cab_support", "respond_cab_eligibility", "book_cab"}:
+                payload["cab_customer_response"] = result.observation.active_opportunity.cab_customer_response
+                payload["pickup_eligible"] = result.observation.active_opportunity.pickup_eligible
+                payload["drop_eligible"] = result.observation.active_opportunity.drop_eligible
+                payload["builder_cab_approved"] = result.observation.active_opportunity.builder_cab_approved
+                payload["cab_booking_reference"] = result.observation.active_opportunity.cab_booking_reference
+                payload["cab_notifications"] = [
+                    item.model_dump() for item in result.observation.active_opportunity.cab_notifications
+                ]
             yield _stream_event(
                 event_type="lead_step",
                 run_id=run_id,
@@ -535,6 +658,14 @@ def _business_rules_for(segment: str) -> list[str]:
 def _expected_property(opportunity: dict[str, Any], inventory: list[dict[str, Any]]) -> dict[str, Any] | None:
     matched = best_property_match(opportunity, [PropertyRecord(**item) for item in inventory])
     return matched.model_dump() if matched else None
+
+
+def _preferred_cab_provider(opportunity: Observation | Any) -> str:
+    preferred_provider = getattr(opportunity, "preferred_cab_provider", None) if not isinstance(opportunity, dict) else opportunity.get("preferred_cab_provider")
+    if preferred_provider:
+        return preferred_provider
+    employment_type = getattr(opportunity, "employment_type", None) if not isinstance(opportunity, dict) else opportunity.get("employment_type")
+    return "uber" if employment_type == "salaried" else "ola"
 
 
 def _stream_event(

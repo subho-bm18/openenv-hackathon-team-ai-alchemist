@@ -501,6 +501,41 @@ A commercial tenant requires a location, size, budget, and timeline fit, with mu
 
 ---
 
+## 9. Pre-Submission Checklist
+
+### HF Space deploys
+- Automated ping to the Space URL — must return 200 and respond to reset()
+
+### OpenEnv spec compliance
+- Validate openenv.yaml, typed models, step()/reset()/state() endpoints
+
+### Dockerfile builds
+- Automated docker build on the submitted repo
+
+### Baseline reproduces
+- Run the submitted inference script — must complete without error and produce scores
+
+### 3+ tasks with graders
+- Enumerate tasks, run each grader, verify scores/reward in 0.0–1.0 range
+
+### Mandatory Additional Instructions
+- Before submitting, ensure the following variables are defined in your environment configuration:
+  - API_BASE_URL   The API endpoint for the LLM.
+  - MODEL_NAME     The model identifier to use for inference.
+  - HF_TOKEN       Your Hugging Face / API key.
+- The inference script must be named `inference.py` and placed in the root directory of the project
+- Participants must use OpenAI Client for all LLM calls using above variables
+- Participants must emit structured stdout logs strictly following the [START], [STEP], and [END] format defined in the sample inference.py provided below. Any deviation in field names, ordering, or formatting will result in incorrect evaluation scoring. Refer to the Sample Inference Script for the complete format specification and examples.
+
+### Infra Restrictions
+- Runtime of inference script should be less than 20min 
+- Make sure your env and inference can run on a machine with vcpu=2, memory=8gb
+
+### Validator
+- Run the pre-submission validation script before submitting
+
+---
+
 ## 9. Reward Function Reference
 
 The reward function should provide meaningful signal during the full trajectory.

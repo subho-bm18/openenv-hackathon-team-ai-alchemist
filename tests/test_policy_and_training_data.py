@@ -1,11 +1,29 @@
 from real_estate_pipeline.live_simulator import DEFAULT_INVENTORY, DEFAULT_LIVE_LEADS
 from real_estate_pipeline.policy import best_property_match, choose_priority, property_fit_score
+from real_estate_pipeline.models import InboundLead
 from real_estate_pipeline.tasks import list_eval_task_ids
 from real_estate_pipeline.training_data import build_step_training_records, build_task_training_records, generate_synthetic_leads
 
 
 def test_choose_priority_marks_high_intent_whitefield_lead_high() -> None:
     lead = DEFAULT_LIVE_LEADS[0]
+    assert choose_priority(lead) == "high"
+
+
+def test_choose_priority_uses_profession_and_employment_context() -> None:
+    lead = InboundLead(
+        lead_id="priority_demo_001",
+        customer_name="Priya Sharma",
+        inquiry="Need a 2BHK near Whitefield soon.",
+        segment="residential",
+        profession="product manager",
+        employment_type="salaried",
+        total_experience_years=8,
+        budget=9500000,
+        location="Whitefield",
+        timeline_days=30,
+        property_type="2BHK apartment",
+    )
     assert choose_priority(lead) == "high"
 
 

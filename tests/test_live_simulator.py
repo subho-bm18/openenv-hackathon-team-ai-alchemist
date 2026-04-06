@@ -1,7 +1,7 @@
-import json
 import asyncio
+import json
 
-from app import live_dashboard, latest_call, simulate_live_stream_custom
+from app import cab_mock_flow, live_dashboard, latest_call, simulate_live_stream_custom
 from real_estate_pipeline.models import InboundLead, LiveTrafficSimulationRequest
 from real_estate_pipeline.live_simulator import (
     DEFAULT_LIVE_LEADS,
@@ -21,6 +21,13 @@ def test_build_runtime_task_sets_expected_whitefield_flow() -> None:
     assert task["expected"]["property_id"] == "res_prop_101"
     assert task["expected"]["customer_contacted"] is True
     assert task["expected"]["stage"] == "builder_appointment_scheduled"
+    assert task["expected"]["interested_in_visit"] is True
+    assert task["expected"]["builder_provides_cab"] is True
+    assert task["expected"]["cab_booking_status"] == "booked"
+    assert task["opportunity"]["profession"] == "software engineer"
+    assert task["opportunity"]["employment_type"] == "salaried"
+    assert task["opportunity"]["total_experience_years"] == 7
+    assert task["opportunity"]["customer_location"] == "Marathahalli"
 
 
 def test_simulate_live_traffic_executes_end_to_end_residential_flow() -> None:
@@ -32,18 +39,31 @@ def test_simulate_live_traffic_executes_end_to_end_residential_flow() -> None:
     assert result.final_score == 1.0
     assert result.final_stage == "builder_appointment_scheduled"
     assert result.recommended_property_id == "res_prop_101"
-    assert len(result.action_trace) == 5
+    assert result.final_state["active_opportunity"]["cab_booking_status"] == "booked"
+    assert result.final_state["active_opportunity"]["cab_booking_provider"] == "uber"
+    assert result.final_state["active_opportunity"]["cab_drop_location"] == "Whitefield"
+    assert result.final_state["active_opportunity"]["builder_cab_approved"] is True
+    assert result.final_state["active_opportunity"]["pickup_eligible"] is True
+    assert result.final_state["active_opportunity"]["drop_eligible"] is True
+    assert result.final_state["active_opportunity"]["cab_booked_within_sla"] is True
+    assert len(result.final_state["active_opportunity"]["cab_notifications"]) == 3
+    assert len(result.action_trace) == 9
     assert result.action_trace[0].action.action_type == "classify_opportunity"
     assert result.action_trace[1].action.action_type == "set_priority"
     assert result.action_trace[2].action.action_type == "recommend_property"
     assert result.action_trace[3].action.action_type == "call_customer"
-    assert result.action_trace[4].action.action_type == "schedule_builder_appointment"
+    assert result.action_trace[4].action.action_type == "confirm_site_visit_interest"
+    assert result.action_trace[5].action.action_type == "check_builder_cab_support"
+    assert result.action_trace[6].action.action_type == "respond_cab_eligibility"
+    assert result.action_trace[7].action.action_type == "book_cab"
+    assert result.action_trace[8].action.action_type == "schedule_builder_appointment"
 
 
 def test_stream_live_traffic_emits_run_and_completion_events() -> None:
     events = [json.loads(event) for event in stream_live_traffic_events(DEFAULT_STREAM_LEADS[:1], delay_seconds=0.0)]
 
     assert events[0]["event"] == "run_started"
+    assert events[1]["payload"]["segment"] == "residential"
     assert any(event["event"] == "lead_step" for event in events)
     assert any(event["payload"].get("call_transcript") for event in events if event["event"] == "lead_step")
     assert any(event["event"] == "lead_completed" for event in events)
@@ -61,6 +81,13 @@ def test_live_dashboard_contains_stream_controls() -> None:
     assert "commercial-group hidden" in body
     assert "Start Voice Intake" in body
     assert "Play Latest Call" in body
+    assert "Cab Operations" in body
+    assert "cabStatusList" in body
+    assert "Cab Timing SLA" in body
+    assert "Profession" in body
+    assert "Employment Type" in body
+    assert "Total Experience (Years)" in body
+    assert "Customer Current Location" in body
 
 
 def test_custom_stream_endpoint_returns_manual_lead_events() -> None:
@@ -108,6 +135,36 @@ def test_latest_call_uses_cached_stream_transcript() -> None:
     assert latest["available"] is True
     assert latest["customer_contacted"] is True
     assert len(latest["call_transcript"]) >= 3
+
+
+def test_cab_mock_flow_returns_customer_confirmation_and_notifications() -> None:
+    request = type(
+        "CabMockRequest",
+        (),
+        {
+            "customer_name": "Aarav Mehta",
+            "inquiry": "I need a 2BHK in Whitefield and would like cab support for the site visit.",
+            "customer_location": "Marathahalli",
+            "property_location": "Whitefield",
+            "property_type": "2BHK apartment",
+            "budget": 9500000,
+            "timeline_days": 30,
+            "profession": "software engineer",
+            "employment_type": "salaried",
+            "total_experience_years": 7,
+            "provider": "uber",
+            "builder_cab_available": True,
+        },
+    )()
+
+    response = cab_mock_flow(request)
+
+    assert response["cab_flow"]["builder_cab_approved"] is True
+    assert response["cab_flow"]["pickup_eligible"] is True
+    assert response["cab_flow"]["drop_eligible"] is True
+    assert response["cab_flow"]["cab_booking_status"] == "booked"
+    assert response["cab_flow"]["cab_booked_within_sla"] is True
+    assert len(response["cab_flow"]["notifications"]) == 3
 
 
 def test_commercial_flow_reaches_deal_closed() -> None:

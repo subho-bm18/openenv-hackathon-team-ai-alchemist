@@ -108,6 +108,9 @@ Useful endpoints:
 - `POST /step`
 - `GET /state`
 - `GET /tasks`
+- `GET /cab/providers`
+- `POST /cab/bookings/preview`
+- `POST /cab/bookings`
 - `GET /simulate/live-example`
 - `POST /simulate/live`
 - `GET /simulate/live/stream`
@@ -190,6 +193,51 @@ The stream includes:
 - `lead_step`
 - `lead_completed`
 - `run_completed`
+
+## Cab Booking Verification
+
+The residential flow includes builder-side cab support and cab booking. The repo now exposes a verification layer so you can distinguish between:
+
+- local simulated booking for demos
+- Uber deep-link handoff
+- Ola partner or corporate onboarding
+- Rapido partner or corporate onboarding
+
+Inspect the verified provider matrix:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:7860/cab/providers" -Method Get
+```
+
+Preview what a live handoff would look like:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:7860/cab/bookings/preview" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{
+    "provider": "uber",
+    "pickup_location": "Marathahalli",
+    "drop_location": "Whitefield",
+    "rider_name": "Aarav Mehta",
+    "mode": "auto"
+  }'
+```
+
+Run an explicit simulated booking for the demo:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:7860/cab/bookings" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{
+    "provider": "uber",
+    "pickup_location": "Marathahalli",
+    "drop_location": "Whitefield",
+    "rider_name": "Aarav Mehta",
+    "mode": "simulate"
+  }'
+```
 
 ## Fine-Tuning Prep
 
