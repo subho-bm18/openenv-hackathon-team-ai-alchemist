@@ -109,7 +109,7 @@ class Observation(BaseModel):
     inventory_snapshot: list[PropertyRecord]
     business_rules: list[str]
     available_actions: list[str]
-    last_action_result: str | None = None
+    last_action_error: str | None = None
 
 
 class Reward(BaseModel):
@@ -196,7 +196,7 @@ class AgentDecision(BaseModel):
     reward: float
     done: bool
     grader_score: float
-    last_action_result: str | None = None
+    last_action_error: str | None = None
 
 
 class LeadSimulationResult(BaseModel):

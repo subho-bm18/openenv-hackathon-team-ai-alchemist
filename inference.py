@@ -9,11 +9,15 @@ from real_estate_pipeline import Action, RealEstatePipelineEnv
 from real_estate_pipeline.models import LeaseTerms, Observation
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-API_KEY = os.getenv("HF_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
 BENCHMARK = "real-estate-pipeline-openenv"
 MAX_STEPS = 6
+
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -21,28 +25,26 @@ def log_start(task: str, env: str, model: str) -> None:
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
-    error_value = error if error else "null"
+    error_value = error if error is not None else "null"
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_value}",
         flush=True,
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+def log_end(success: bool, steps: int, rewards: list[float]) -> None:
     reward_values = ",".join(f"{reward:.2f}" for reward in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={reward_values}",
+        f"[END] success={str(success).lower()} steps={steps} rewards={reward_values}",
         flush=True,
     )
 
 
-def build_client() -> OpenAI | None:
-    if not API_KEY:
-        return None
-    return OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+def build_client() -> OpenAI:
+    return OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 
-def call_model(client: OpenAI | None, observation: Observation) -> str:
+def call_model(client: OpenAI, observation: Observation) -> str:
     prompt = (
         "You are selecting the next structured action for a real-estate pipeline environment.\n"
         f"Task: {observation.task_id}\n"
@@ -50,8 +52,6 @@ def call_model(client: OpenAI | None, observation: Observation) -> str:
         f"Business rules: {' | '.join(observation.business_rules)}\n"
         "Respond with one short sentence describing the next best action."
     )
-    if client is None:
-        return "fallback-policy"
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -120,11 +120,12 @@ POLICIES: dict[str, Callable[[Observation, int], Action]] = {
 }
 
 
-def run_task(env: RealEstatePipelineEnv, client: OpenAI | None, task_id: str) -> float:
+def run_task(env: RealEstatePipelineEnv, client: OpenAI, task_id: str) -> float:
     observation = env.reset(task_id)
     rewards: list[float] = []
     steps_taken = 0
     success = False
+    score = 0.0
 
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
@@ -133,28 +134,29 @@ def run_task(env: RealEstatePipelineEnv, client: OpenAI | None, task_id: str) ->
             _ = call_model(client, observation)
             action = POLICIES[task_id](observation, step)
             result = env.step(action)
+
             reward_value = result.reward.value
             rewards.append(reward_value)
             steps_taken = step
-            error = result.observation.last_action_result if "Invalid action" in (result.observation.last_action_result or "") else None
-            log_step(step, action_to_str(action), reward_value, result.done, error)
+
+            last_error = getattr(result.observation, "last_action_error", None)
+            log_step(step, action_to_str(action), reward_value, result.done, last_error)
+
             observation = result.observation
             if result.done:
                 break
 
-        score = env.state()["grader_score"]
+        score = float(env.state().get("grader_score", 0.0))
         success = score >= 0.5
         return score
     finally:
-        log_end(success=success, steps=steps_taken, score=env.state()["grader_score"], rewards=rewards)
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
 def main() -> None:
     client = build_client()
     env = RealEstatePipelineEnv()
-    scores = [run_task(env, client, task_id) for task_id in env.available_tasks()]
-    average = sum(scores) / len(scores) if scores else 0.0
-    print(f"Average score across {len(scores)} tasks: {average:.3f}", flush=True)
+    _scores = [run_task(env, client, task_id) for task_id in env.available_tasks()]
 
 
 if __name__ == "__main__":

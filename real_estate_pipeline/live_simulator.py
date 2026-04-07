@@ -516,7 +516,7 @@ def process_runtime_task(task: dict[str, Any], lead_id: str | None = None) -> Le
                 reward=result.reward.value,
                 done=result.done,
                 grader_score=float(result.info.get("grader_score", 0.0)),
-                last_action_result=result.observation.last_action_result,
+                last_action_error=result.observation.last_action_error,
             )
         )
         observation = result.observation
@@ -576,7 +576,7 @@ def stream_live_traffic_events(
                 "reward": result.reward.value,
                 "done": result.done,
                 "grader_score": float(result.info.get("grader_score", 0.0)),
-                "last_action_result": result.observation.last_action_result,
+                "last_action_error": result.observation.last_action_error,
             }
             if action.action_type == "call_customer":
                 payload["call_outcome"] = result.observation.active_opportunity.call_outcome

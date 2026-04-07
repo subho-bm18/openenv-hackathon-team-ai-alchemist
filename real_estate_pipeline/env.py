@@ -49,7 +49,7 @@ class RealEstatePipelineEnv:
 
         if action.opportunity_id != opportunity["opportunity_id"]:
             reward = invalid_action_reward(action, "wrong_opportunity")
-            self._state["last_action_result"] = "Invalid action: wrong opportunity_id"
+            self._state["last_action_error"] = "Invalid action: wrong opportunity_id"
         else:
             self._apply_action(action, reward, opportunity, expected)
 
@@ -88,7 +88,7 @@ class RealEstatePipelineEnv:
             "active_opportunity": OpportunityDetail(**deepcopy(task["opportunity"])).model_dump(),
             "inventory_snapshot": [PropertyRecord(**item).model_dump() for item in deepcopy(task["inventory"])],
             "business_rules": deepcopy(task["business_rules"]),
-            "last_action_result": None,
+            "last_action_error": None,
             "requested_fields": [],
             "action_history": [],
             "grader_score": 0.0,
@@ -127,13 +127,13 @@ class RealEstatePipelineEnv:
                 "advance_stage",
                 "drop_opportunity",
             ],
-            last_action_result=self._state["last_action_result"],
+            last_action_error=self._state["last_action_error"],
         )
 
     def _apply_action(self, action: Action, reward: Reward, opportunity: dict[str, Any], expected: dict[str, Any]) -> None:
         if action.action_type == "classify_opportunity":
             opportunity["category"] = action.category
-            self._state["last_action_result"] = f"Category set to {action.category}"
+            self._state["last_action_error"] = f"Category set to {action.category}"
             if action.category == expected.get("category"):
                 apply_delta(reward, "category", 0.10, signal="correct_category")
             else:
@@ -141,7 +141,7 @@ class RealEstatePipelineEnv:
 
         elif action.action_type == "set_priority":
             opportunity["priority"] = action.priority
-            self._state["last_action_result"] = f"Priority set to {action.priority}"
+            self._state["last_action_error"] = f"Priority set to {action.priority}"
             if action.priority == expected.get("priority"):
                 apply_delta(reward, "priority", 0.10, signal="correct_priority")
             else:
@@ -151,7 +151,7 @@ class RealEstatePipelineEnv:
             asked = set(action.requested_fields)
             self._state["requested_fields"] = sorted(asked | set(self._state["requested_fields"]))
             opportunity["stage"] = "awaiting_customer"
-            self._state["last_action_result"] = "Requested missing details from lead"
+            self._state["last_action_error"] = "Requested missing details from lead"
             needed = set(expected.get("requested_fields", []))
             if needed and needed.issubset(asked):
                 apply_delta(reward, "missing_info", 0.15, signal="requested_required_fields")
@@ -160,7 +160,7 @@ class RealEstatePipelineEnv:
 
         elif action.action_type == "recommend_property":
             opportunity["recommended_property_id"] = action.property_id
-            self._state["last_action_result"] = f"Recommended property {action.property_id}"
+            self._state["last_action_error"] = f"Recommended property {action.property_id}"
             if action.property_id == expected.get("property_id"):
                 apply_delta(reward, "property_match", 0.20, signal="correct_property_match")
             else:
@@ -173,7 +173,7 @@ class RealEstatePipelineEnv:
             opportunity["call_outcome"] = outcome
             opportunity["last_contact_note"] = summarize_call(transcript)
             opportunity["assigned_action"] = "call_customer"
-            self._state["last_action_result"] = "Customer called successfully"
+            self._state["last_action_error"] = "Customer called successfully"
             if expected.get("customer_contacted"):
                 apply_delta(reward, "customer_contact", 0.10, signal="customer_contacted")
             else:
@@ -185,9 +185,9 @@ class RealEstatePipelineEnv:
             opportunity["cab_requested"] = bool(action.cab_requested) if action.cab_requested is not None else bool(visit_interest)
             opportunity["assigned_action"] = "confirm_site_visit_interest"
             if opportunity["interested_in_visit"]:
-                self._state["last_action_result"] = "Customer confirmed interest in the site visit"
+                self._state["last_action_error"] = "Customer confirmed interest in the site visit"
             else:
-                self._state["last_action_result"] = "Customer declined the site visit"
+                self._state["last_action_error"] = "Customer declined the site visit"
             if opportunity["interested_in_visit"] == expected.get("interested_in_visit", True):
                 apply_delta(reward, "visit_interest", 0.10, signal="visit_interest_confirmed")
             else:
@@ -205,7 +205,7 @@ class RealEstatePipelineEnv:
             opportunity["cab_pickup_location"] = eligibility["pickup_location"]
             opportunity["cab_drop_location"] = eligibility["drop_location"]
             opportunity["assigned_action"] = "check_builder_cab_support"
-            self._state["last_action_result"] = eligibility["cab_customer_response"]
+            self._state["last_action_error"] = eligibility["cab_customer_response"]
             if eligibility["builder_provides_cab"] == expected.get("builder_provides_cab", False):
                 apply_delta(reward, "builder_cab", 0.08, signal="builder_cab_checked")
             else:
@@ -215,7 +215,7 @@ class RealEstatePipelineEnv:
             response_text = opportunity.get("cab_customer_response") or "Cab eligibility has been checked."
             opportunity["assigned_action"] = "respond_cab_eligibility"
             opportunity["last_contact_note"] = response_text
-            self._state["last_action_result"] = response_text
+            self._state["last_action_error"] = response_text
             if opportunity.get("cab_eligibility_status") == "eligible":
                 apply_delta(reward, "cab_customer_response", 0.08, signal="cab_eligibility_shared")
             else:
@@ -227,16 +227,16 @@ class RealEstatePipelineEnv:
             pickup_location = action.pickup_location or opportunity.get("customer_location") or opportunity.get("location")
             drop_location = action.drop_location or property_location
             if not opportunity.get("interested_in_visit"):
-                self._state["last_action_result"] = "Cab cannot be booked before customer confirms visit interest"
+                self._state["last_action_error"] = "Cab cannot be booked before customer confirms visit interest"
                 apply_delta(reward, "cab_booking", -0.08, penalty="visit_not_confirmed")
             elif not opportunity.get("builder_provides_cab"):
-                self._state["last_action_result"] = "Cab cannot be booked because builder cab support is unavailable"
+                self._state["last_action_error"] = "Cab cannot be booked because builder cab support is unavailable"
                 apply_delta(reward, "cab_booking", -0.08, penalty="builder_cab_unavailable")
             elif not opportunity.get("builder_cab_approved"):
-                self._state["last_action_result"] = "Cab cannot be booked because pickup and drop are not eligible after builder approval checks"
+                self._state["last_action_error"] = "Cab cannot be booked because pickup and drop are not eligible after builder approval checks"
                 apply_delta(reward, "cab_booking", -0.08, penalty="cab_eligibility_failed")
             elif not property_location:
-                self._state["last_action_result"] = "Cab cannot be booked without validating the property location"
+                self._state["last_action_error"] = "Cab cannot be booked without validating the property location"
                 apply_delta(reward, "cab_booking", -0.08, penalty="property_location_missing")
             else:
                 try:
@@ -247,7 +247,7 @@ class RealEstatePipelineEnv:
                         rider_name=opportunity.get("customer_name", "Customer"),
                     )
                 except ValueError as exc:
-                    self._state["last_action_result"] = str(exc)
+                    self._state["last_action_error"] = str(exc)
                     apply_delta(reward, "cab_booking", -0.08, penalty="cab_booking_failed")
                 else:
                     opportunity["cab_booking_status"] = booking["status"]
@@ -262,7 +262,7 @@ class RealEstatePipelineEnv:
                     opportunity["cab_booked_within_sla"] = True
                     opportunity["cab_notifications"] = [item.model_dump() for item in build_cab_notifications(opportunity)]
                     opportunity["assigned_action"] = "book_cab"
-                    self._state["last_action_result"] = (
+                    self._state["last_action_error"] = (
                         f"{opportunity.get('cab_customer_response') or 'Cab approved.'} "
                         f"Cab booked within 59 seconds via {booking['provider']}. "
                         f"Reference: {booking['booking_reference']}. "
@@ -278,7 +278,7 @@ class RealEstatePipelineEnv:
             opportunity["assigned_action"] = "schedule_visit"
             opportunity["appointment_type"] = "site_visit"
             opportunity["appointment_party"] = action.appointment_party or "seller"
-            self._state["last_action_result"] = "Site visit scheduled"
+            self._state["last_action_error"] = "Site visit scheduled"
             if expected.get("stage") == "visit_scheduled":
                 apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
             else:
@@ -286,14 +286,14 @@ class RealEstatePipelineEnv:
 
         elif action.action_type == "schedule_builder_appointment":
             if expected.get("cab_booking_status") == "booked" and opportunity.get("cab_booking_status") != "booked":
-                self._state["last_action_result"] = "Builder appointment should only be scheduled after cab booking is completed"
+                self._state["last_action_error"] = "Builder appointment should only be scheduled after cab booking is completed"
                 apply_delta(reward, "stage", -0.05, penalty="cab_booking_pending")
             else:
                 opportunity["stage"] = "builder_appointment_scheduled"
                 opportunity["assigned_action"] = "schedule_builder_appointment"
                 opportunity["appointment_type"] = "builder_appointment"
                 opportunity["appointment_party"] = action.appointment_party or "builder"
-                self._state["last_action_result"] = "Builder appointment scheduled"
+                self._state["last_action_error"] = "Builder appointment scheduled"
                 if expected.get("stage") == "builder_appointment_scheduled":
                     apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
                 else:
@@ -306,7 +306,7 @@ class RealEstatePipelineEnv:
             opportunity["appointment_party"] = action.appointment_party or "landlord"
             if not opportunity.get("pending_objections"):
                 opportunity["pending_objections"] = deepcopy(expected.get("pending_objections", []))
-            self._state["last_action_result"] = "Landlord meeting scheduled"
+            self._state["last_action_error"] = "Landlord meeting scheduled"
             if expected.get("stage") == "landlord_meeting_scheduled":
                 apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
             else:
@@ -322,7 +322,7 @@ class RealEstatePipelineEnv:
                 expected_counter = expected.get("landlord_counter_offer")
                 if expected_counter:
                     opportunity["landlord_counter_offer"] = deepcopy(expected_counter)
-            self._state["last_action_result"] = "Commercial terms negotiated"
+            self._state["last_action_error"] = "Commercial terms negotiated"
             if expected.get("stage") == "negotiation":
                 apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
             else:
@@ -333,7 +333,7 @@ class RealEstatePipelineEnv:
             pending = [item for item in opportunity.get("pending_objections", []) if item not in resolved]
             opportunity["pending_objections"] = pending
             opportunity["assigned_action"] = "resolve_objection"
-            self._state["last_action_result"] = "Commercial objections addressed"
+            self._state["last_action_error"] = "Commercial objections addressed"
             expected_objections = set(expected.get("pending_objections", []))
             if expected_objections and resolved:
                 ratio = len(resolved & expected_objections) / len(expected_objections)
@@ -347,16 +347,16 @@ class RealEstatePipelineEnv:
             if counter_offer:
                 opportunity["lease_terms"] = deepcopy(counter_offer)
                 opportunity["landlord_counter_offer"] = None
-                self._state["last_action_result"] = "Landlord counter-offer accepted"
+                self._state["last_action_error"] = "Landlord counter-offer accepted"
                 apply_delta(reward, "counter_offer", 0.10, signal="counter_offer_accepted")
             else:
-                self._state["last_action_result"] = "No landlord counter-offer available"
+                self._state["last_action_error"] = "No landlord counter-offer available"
                 apply_delta(reward, "counter_offer", -0.05, penalty="missing_counter_offer")
 
         elif action.action_type == "send_commercial_proposal":
             opportunity["proposal_sent"] = True
             opportunity["assigned_action"] = "send_commercial_proposal"
-            self._state["last_action_result"] = "Commercial proposal sent"
+            self._state["last_action_error"] = "Commercial proposal sent"
             apply_delta(reward, "proposal", 0.08, signal="proposal_shared")
 
         elif action.action_type == "close_deal":
@@ -365,12 +365,12 @@ class RealEstatePipelineEnv:
             opportunity["closing_value"] = action.closing_value or opportunity.get("closing_value")
             opportunity["assigned_action"] = "close_deal"
             if opportunity.get("pending_objections"):
-                self._state["last_action_result"] = "Commercial deal cannot close with unresolved objections"
+                self._state["last_action_error"] = "Commercial deal cannot close with unresolved objections"
                 opportunity["deal_closed"] = False
                 opportunity["stage"] = "negotiation"
                 apply_delta(reward, "deal_closed", -0.08, penalty="unresolved_objections")
             else:
-                self._state["last_action_result"] = "Commercial deal closed"
+                self._state["last_action_error"] = "Commercial deal closed"
                 if expected.get("deal_closed"):
                     apply_delta(reward, "deal_closed", 0.25, signal="deal_closed")
                 else:
@@ -381,7 +381,7 @@ class RealEstatePipelineEnv:
         elif action.action_type == "move_to_nurture":
             opportunity["stage"] = "nurture"
             opportunity["assigned_action"] = "move_to_nurture"
-            self._state["last_action_result"] = "Lead moved to nurture"
+            self._state["last_action_error"] = "Lead moved to nurture"
             if expected.get("stage") == "nurture":
                 apply_delta(reward, "stage", 0.20, signal="correct_nurture_progression")
             else:
@@ -389,7 +389,7 @@ class RealEstatePipelineEnv:
 
         elif action.action_type == "recommend_lease_terms":
             opportunity["lease_terms"] = action.lease_terms.model_dump() if action.lease_terms else None
-            self._state["last_action_result"] = "Lease terms recommended"
+            self._state["last_action_error"] = "Lease terms recommended"
             actual = opportunity["lease_terms"] or {}
             expected_terms = expected.get("lease_terms", {})
             if actual and actual.get("lease_years") == expected_terms.get("lease_years"):
@@ -400,7 +400,7 @@ class RealEstatePipelineEnv:
         elif action.action_type == "advance_stage":
             opportunity["stage"] = action.stage or "negotiation"
             opportunity["assigned_action"] = "advance_stage"
-            self._state["last_action_result"] = f"Advanced stage to {opportunity['stage']}"
+            self._state["last_action_error"] = f"Advanced stage to {opportunity['stage']}"
             if opportunity["stage"] == expected.get("stage"):
                 apply_delta(reward, "stage", 0.20, signal="correct_stage_progression")
             else:
@@ -409,7 +409,7 @@ class RealEstatePipelineEnv:
         elif action.action_type == "drop_opportunity":
             opportunity["stage"] = "dropped"
             opportunity["assigned_action"] = "drop_opportunity"
-            self._state["last_action_result"] = "Opportunity dropped"
+            self._state["last_action_error"] = "Opportunity dropped"
             apply_delta(reward, "drop", -0.10, penalty="dropped_live_opportunity")
 
         else:
@@ -418,7 +418,7 @@ class RealEstatePipelineEnv:
             reward.components = invalid.components
             reward.progress_signals = invalid.progress_signals
             reward.penalties = invalid.penalties
-            self._state["last_action_result"] = "Unknown action"
+            self._state["last_action_error"] = "Unknown action"
 
     def _property_by_id(self, property_id: str | None) -> dict[str, Any] | None:
         if not property_id:
